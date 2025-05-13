@@ -50,11 +50,13 @@ class EmailService {
    */
   async sendEmail({ to, subject, text, html }) {
     if (!this.initialized) {
-      console.warn('Email service not initialized. Cannot send email.');
+      console.warn('Email service not initialized. Cannot send email to:', to);
       return false;
     }
 
     try {
+      console.log(`Attempting to send email to: ${to} with subject: ${subject}`);
+      
       const mailOptions = {
         from: process.env.GMAIL_USER,
         to,
@@ -63,13 +65,131 @@ class EmailService {
         html: html || text
       };
 
-      await this.transporter.sendMail(mailOptions);
-      console.log(`Email sent successfully to ${to}`);
+      const info = await this.transporter.sendMail(mailOptions);
+      console.log(`Email sent successfully to ${to} (Message ID: ${info.messageId})`);
       return true;
     } catch (error) {
-      console.error('Failed to send email:', error);
+      console.error(`Failed to send email to ${to}:`, error.message);
       return false;
     }
+  }
+
+  /**
+   * Send a verification email with a link to the email verification page
+   * @param {Object} options - Verification options
+   * @param {string} options.email - Recipient email address
+   * @param {string} options.token - Verification token
+   * @param {string} options.name - User's name
+   * @param {string} options.userType - Type of user (user, contributor, admin)
+   * @returns {Promise<boolean>} - Success status
+   */
+  async sendVerificationEmail({ email, token, name, userType }) {
+    const baseUrl = process.env.BACKEND_URL || `http://localhost:${process.env.PORT || 3000}`;
+    const verificationUrl = `${baseUrl}/verify-email?email=${encodeURIComponent(email)}&token=${token}&type=${userType}`;
+    
+    const subject = `Verify Your Email - UpWeb Monitoring`;
+    
+    const text = `
+      Hello ${name},
+      
+      Thank you for registering with UpWeb Monitoring as a ${userType}.
+      
+      Please verify your email address by clicking on the link below:
+      ${verificationUrl}
+      
+      This link will expire in 24 hours.
+      
+      If you did not create an account, please ignore this email.
+      
+      Best regards,
+      The UpWeb Monitoring Team
+    `;
+    
+    const html = `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+        <h2 style="color: #3182ce;">Verify Your Email Address</h2>
+        <p>Hello ${name},</p>
+        <p>Thank you for registering with UpWeb Monitoring as a ${userType}.</p>
+        <p>Please verify your email address by clicking on the button below:</p>
+        
+        <div style="margin: 30px 0; text-align: center;">
+          <a href="${verificationUrl}" 
+             style="background-color: #3182ce; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; font-weight: bold;">
+            Verify Email Address
+          </a>
+        </div>
+        
+        <p>Or copy and paste this link in your browser:</p>
+        <p style="word-break: break-all; color: #4a5568;">
+          <a href="${verificationUrl}">${verificationUrl}</a>
+        </p>
+        
+        <p>This link will expire in 24 hours.</p>
+        <p>If you did not create an account, please ignore this email.</p>
+        <p>Best regards,<br>The UpWeb Monitoring Team</p>
+      </div>
+    `;
+    
+    return this.sendEmail({ to: email, subject, text, html });
+  }
+
+  /**
+   * Send a password reset email with a link to the reset password page
+   * @param {Object} options - Reset options
+   * @param {string} options.email - Recipient email address
+   * @param {string} options.token - Reset token
+   * @param {string} options.name - User's name
+   * @param {string} options.userType - Type of user (user, contributor, admin)
+   * @returns {Promise<boolean>} - Success status
+   */
+  async sendPasswordResetEmail({ email, token, name, userType }) {
+    const baseUrl = process.env.BACKEND_URL || `http://localhost:${process.env.PORT || 3000}`;
+    const resetUrl = `${baseUrl}/reset-password?email=${encodeURIComponent(email)}&token=${token}&type=${userType}`;
+    
+    const subject = `Reset Your Password - UpWeb Monitoring`;
+    
+    const text = `
+      Hello ${name},
+      
+      We received a request to reset your password for your UpWeb Monitoring account.
+      
+      Please click on the link below to reset your password:
+      ${resetUrl}
+      
+      This link will expire in 1 hour.
+      
+      If you did not request a password reset, please ignore this email.
+      
+      Best regards,
+      The UpWeb Monitoring Team
+    `;
+    
+    const html = `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+        <h2 style="color: #3182ce;">Reset Your Password</h2>
+        <p>Hello ${name},</p>
+        <p>We received a request to reset your password for your UpWeb Monitoring account.</p>
+        <p>Please click on the button below to reset your password:</p>
+        
+        <div style="margin: 30px 0; text-align: center;">
+          <a href="${resetUrl}" 
+             style="background-color: #3182ce; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; font-weight: bold;">
+            Reset Password
+          </a>
+        </div>
+        
+        <p>Or copy and paste this link in your browser:</p>
+        <p style="word-break: break-all; color: #4a5568;">
+          <a href="${resetUrl}">${resetUrl}</a>
+        </p>
+        
+        <p>This link will expire in 1 hour.</p>
+        <p>If you did not request a password reset, please ignore this email.</p>
+        <p>Best regards,<br>The UpWeb Monitoring Team</p>
+      </div>
+    `;
+    
+    return this.sendEmail({ to: email, subject, text, html });
   }
 
   /**

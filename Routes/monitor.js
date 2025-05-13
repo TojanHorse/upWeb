@@ -225,5 +225,305 @@ monitorRouter.get('/history', authenticateUser, async (req, res) => {
     }
 });
 
+// Get user's monitors
+monitorRouter.get('/monitors', authenticateUser, async (req, res) => {
+    try {
+        const userId = req.user.userId;
+        
+        // Get all monitors the user has permissions to view
+        const monitors = await Monitor.find()
+            .populate('website', 'name url')
+            .sort({ createdAt: -1 });
+        
+        // Get all recent checks for uptime calculation
+        const now = new Date();
+        const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+        
+        const monitorIds = monitors.map(m => m._id);
+        const recentChecks = await MonitorCheck.find({
+            monitor: { $in: monitorIds },
+            createdAt: { $gte: thirtyDaysAgo }
+        });
+        
+        // Calculate uptime and status for each monitor
+        const monitorsWithStats = monitors.map(monitor => {
+            const monitorChecks = recentChecks.filter(check => 
+                check.monitor.toString() === monitor._id.toString()
+            );
+            
+            const totalChecks = monitorChecks.length;
+            const successfulChecks = monitorChecks.filter(check => check.success).length;
+            
+            // Calculate uptime percentage
+            const uptime = totalChecks > 0 
+                ? (successfulChecks / totalChecks * 100).toFixed(2) 
+                : 100;
+            
+            // Determine current status based on most recent check
+            const latestCheck = monitorChecks.sort((a, b) => 
+                b.createdAt - a.createdAt
+            )[0];
+            
+            const status = !latestCheck ? 'unknown' : 
+                latestCheck.success ? 'up' : 'down';
+            
+            // Calculate average response time
+            const avgResponseTime = totalChecks > 0
+                ? (monitorChecks.reduce((sum, check) => sum + check.responseTime, 0) / totalChecks).toFixed(0)
+                : 0;
+            
+            return {
+                id: monitor._id,
+                name: monitor.name,
+                url: monitor.url,
+                type: monitor.type,
+                status,
+                uptime: parseFloat(uptime),
+                avgResponseTime: parseInt(avgResponseTime),
+                lastChecked: latestCheck ? latestCheck.createdAt : null,
+                website: monitor.website ? {
+                    id: monitor.website._id,
+                    name: monitor.website.name,
+                    url: monitor.website.url
+                } : null
+            };
+        });
+        
+        res.json({ monitors: monitorsWithStats });
+    } catch (error) {
+        console.error('Get user monitors error:', error);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+});
+
+// Get contributor's monitors
+monitorRouter.get('/contributor/monitors', authenticateContributor, async (req, res) => {
+    try {
+        const contributorId = req.contributor.contributorId;
+        
+        // Find all websites this contributor has access to
+        const websites = await Website.find({ contributors: contributorId });
+        const websiteIds = websites.map(w => w._id);
+        
+        // Find all monitors for these websites
+        const monitors = await Monitor.find({ website: { $in: websiteIds } })
+            .populate('website', 'name url')
+            .sort({ createdAt: -1 });
+        
+        // Get all recent checks for uptime calculation
+        const now = new Date();
+        const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+        
+        const monitorIds = monitors.map(m => m._id);
+        const recentChecks = await MonitorCheck.find({
+            monitor: { $in: monitorIds },
+            createdAt: { $gte: thirtyDaysAgo }
+        });
+        
+        // Calculate uptime and status for each monitor
+        const monitorsWithStats = monitors.map(monitor => {
+            const monitorChecks = recentChecks.filter(check => 
+                check.monitor.toString() === monitor._id.toString()
+            );
+            
+            const totalChecks = monitorChecks.length;
+            const successfulChecks = monitorChecks.filter(check => check.success).length;
+            
+            // Calculate uptime percentage
+            const uptime = totalChecks > 0 
+                ? (successfulChecks / totalChecks * 100).toFixed(2) 
+                : 100;
+            
+            // Determine current status based on most recent check
+            const latestCheck = monitorChecks.sort((a, b) => 
+                b.createdAt - a.createdAt
+            )[0];
+            
+            const status = !latestCheck ? 'unknown' : 
+                latestCheck.success ? 'up' : 'down';
+            
+            // Calculate average response time
+            const avgResponseTime = totalChecks > 0
+                ? (monitorChecks.reduce((sum, check) => sum + check.responseTime, 0) / totalChecks).toFixed(0)
+                : 0;
+            
+            return {
+                id: monitor._id,
+                name: monitor.name,
+                url: monitor.url,
+                type: monitor.type,
+                status,
+                uptime: parseFloat(uptime),
+                avgResponseTime: parseInt(avgResponseTime),
+                lastChecked: latestCheck ? latestCheck.createdAt : null,
+                website: monitor.website ? {
+                    id: monitor.website._id,
+                    name: monitor.website.name,
+                    url: monitor.website.url
+                } : null
+            };
+        });
+        
+        res.json({ monitors: monitorsWithStats });
+    } catch (error) {
+        console.error('Get contributor monitors error:', error);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+});
+
+// Get admin's monitors
+monitorRouter.get('/admin/monitors', authenticateAdmin, async (req, res) => {
+    try {
+        // Admin can see all monitors
+        const monitors = await Monitor.find()
+            .populate('website', 'name url')
+            .sort({ createdAt: -1 });
+        
+        // Get all recent checks for uptime calculation
+        const now = new Date();
+        const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+        
+        const monitorIds = monitors.map(m => m._id);
+        const recentChecks = await MonitorCheck.find({
+            monitor: { $in: monitorIds },
+            createdAt: { $gte: thirtyDaysAgo }
+        });
+        
+        // Calculate uptime and status for each monitor
+        const monitorsWithStats = monitors.map(monitor => {
+            const monitorChecks = recentChecks.filter(check => 
+                check.monitor.toString() === monitor._id.toString()
+            );
+            
+            const totalChecks = monitorChecks.length;
+            const successfulChecks = monitorChecks.filter(check => check.success).length;
+            
+            // Calculate uptime percentage
+            const uptime = totalChecks > 0 
+                ? (successfulChecks / totalChecks * 100).toFixed(2) 
+                : 100;
+            
+            // Determine current status based on most recent check
+            const latestCheck = monitorChecks.sort((a, b) => 
+                b.createdAt - a.createdAt
+            )[0];
+            
+            const status = !latestCheck ? 'unknown' : 
+                latestCheck.success ? 'up' : 'down';
+            
+            // Calculate average response time
+            const avgResponseTime = totalChecks > 0
+                ? (monitorChecks.reduce((sum, check) => sum + check.responseTime, 0) / totalChecks).toFixed(0)
+                : 0;
+            
+            return {
+                id: monitor._id,
+                name: monitor.name,
+                url: monitor.url,
+                type: monitor.type,
+                status,
+                uptime: parseFloat(uptime),
+                avgResponseTime: parseInt(avgResponseTime),
+                lastChecked: latestCheck ? latestCheck.createdAt : null,
+                website: monitor.website ? {
+                    id: monitor.website._id,
+                    name: monitor.website.name,
+                    url: monitor.website.url
+                } : null
+            };
+        });
+        
+        res.json({ monitors: monitorsWithStats });
+    } catch (error) {
+        console.error('Get admin monitors error:', error);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+});
+
+// Get monitor details - for authenticated users (all types)
+monitorRouter.get('/details/:id', async (req, res) => {
+    try {
+        const monitorId = req.params.id;
+        const days = parseInt(req.query.days) || 30;
+        
+        // Check authentication
+        const user = req.user || req.contributor || req.admin;
+        if (!user) {
+            return res.status(401).json({ error: 'Authentication required' });
+        }
+        
+        // Get monitor statistics
+        const stats = await monitoringService.getMonitorStats(monitorId, { days });
+        
+        res.json(stats);
+    } catch (error) {
+        console.error('Get monitor details error:', error);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+});
+
 // Export the router
-module.exports = { monitorRouter }; 
+module.exports = { monitorRouter };
+
+// Add a test endpoint to help diagnose issues
+monitorRouter.get('/test', (req, res) => {
+    res.json({
+        success: true,
+        message: 'Monitor API is working correctly',
+        timestamp: new Date().toISOString()
+    });
+});
+
+// Add debugging endpoint that shows sample monitor data without authentication
+monitorRouter.get('/debug/sample', async (req, res) => {
+    try {
+        const { Monitor } = require('../Database/module.monitor');
+        const { MonitorCheck } = require('../Database/module.monitorCheck');
+        
+        // Get a sample of monitors (limit to 5)
+        const monitors = await Monitor.find()
+            .populate('website', 'name url')
+            .limit(5)
+            .sort({ createdAt: -1 });
+        
+        if (monitors.length === 0) {
+            return res.json({
+                success: true,
+                message: 'No monitors found in the database',
+                timestamp: new Date().toISOString(),
+                monitors: []
+            });
+        }
+        
+        // Get sample check data
+        const monitorIds = monitors.map(m => m._id);
+        const checks = await MonitorCheck.find({ monitor: { $in: monitorIds } })
+            .limit(10)
+            .sort({ createdAt: -1 });
+        
+        res.json({
+            success: true,
+            message: 'Sample monitor data retrieved',
+            timestamp: new Date().toISOString(),
+            monitorCount: monitors.length,
+            checksCount: checks.length,
+            sampleMonitor: monitors[0] ? {
+                id: monitors[0]._id,
+                name: monitors[0].name,
+                url: monitors[0].url,
+                type: monitors[0].type,
+                website: monitors[0].website ? {
+                    id: monitors[0].website._id,
+                    name: monitors[0].website.name,
+                    url: monitors[0].website.url
+                } : null
+            } : null
+        });
+    } catch (error) {
+        console.error('Debug sample monitors error:', error);
+        res.status(500).json({ 
+            error: 'Internal server error',
+            message: error.message
+        });
+    }
+}); 

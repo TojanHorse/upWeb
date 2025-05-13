@@ -8,22 +8,56 @@ const SECRET = process.env.ADMIN_JWT_SECRET;
 
 // Middleware to verify admin token
 const authenticateAdmin = (req, res, next) => {
-    const authHeader = req.headers.authorization;
-    if (!authHeader) {
-        return res.status(401).json({ error: 'Authorization header missing' });
-    }
-
-    const token = authHeader.split(' ')[1];
-    if (!token) {
-        return res.status(401).json({ error: 'Token missing' });
-    }
-
     try {
+        const authHeader = req.headers.authorization;
+        if (!authHeader) {
+            return res.status(401).json({ 
+                error: 'Authorization header missing', 
+                message: 'Please login to access this resource'
+            });
+        }
+
+        const parts = authHeader.split(' ');
+        if (parts.length !== 2 || parts[0] !== 'Bearer') {
+            return res.status(401).json({ 
+                error: 'Invalid authorization format', 
+                message: 'Authorization header must be in format: Bearer <token>'
+            });
+        }
+
+        const token = parts[1];
+        if (!token) {
+            return res.status(401).json({ 
+                error: 'Token missing', 
+                message: 'No token provided in authorization header'
+            });
+        }
+
         const decoded = jwt.verify(token, SECRET);
+        
+        // Ensure we have an adminId in the token payload
+        if (!decoded.adminId) {
+            return res.status(401).json({ 
+                error: 'Invalid token payload', 
+                message: 'Token missing required admin information'
+            });
+        }
+        
         req.admin = decoded;
+        console.log('Admin authenticated:', decoded.adminId);
         next();
     } catch (error) {
-        return res.status(401).json({ error: 'Invalid token' });
+        console.error('Authentication error:', error.message);
+        if (error.name === 'TokenExpiredError') {
+            return res.status(401).json({ 
+                error: 'Token expired', 
+                message: 'Your session has expired. Please login again'
+            });
+        }
+        return res.status(401).json({ 
+            error: 'Invalid token', 
+            message: 'Authentication failed. Please login again'
+        });
     }
 };
 
@@ -342,56 +376,53 @@ adminRouter.get('/stats', authenticateAdmin, async (req, res) => {
     }
 });
 
-// Admin endpoint to get all monitors
+// Get all monitors (admin can see all)
 adminRouter.get('/monitors', authenticateAdmin, async (req, res) => {
     try {
+        // Admin can see all monitors
         const { Monitor } = require('../Database/module.monitor');
         const { MonitorCheck } = require('../Database/module.monitorCheck');
-        const { Website } = require('../Database/module.websites');
         
-        // Get all monitors with their website info
-        const monitors = await Monitor.find({})
-            .populate('website', 'name url status');
+        const monitors = await Monitor.find()
+            .populate('website', 'name url')
+            .sort({ createdAt: -1 });
         
-        // For each monitor, calculate the recent status and uptime
-        const monitorsWithStats = await Promise.all(monitors.map(async (monitor) => {
-            // Get latest 10 checks for this monitor
-            const recentChecks = await MonitorCheck.find({ monitor: monitor._id })
-                .sort({ timestamp: -1 })
-                .limit(10);
+        // Get all recent checks for uptime calculation
+        const now = new Date();
+        const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+        
+        const monitorIds = monitors.map(m => m._id);
+        const recentChecks = await MonitorCheck.find({
+            monitor: { $in: monitorIds },
+            createdAt: { $gte: thirtyDaysAgo }
+        });
+        
+        // Calculate uptime and status for each monitor
+        const monitorsWithStats = monitors.map(monitor => {
+            const monitorChecks = recentChecks.filter(check => 
+                check.monitor.toString() === monitor._id.toString()
+            );
             
-            // Calculate status based on recent checks
-            let status = 'unknown';
-            let responseTime = 0;
-            let uptime = 100;
-            let lastChecked = monitor.updatedAt;
+            const totalChecks = monitorChecks.length;
+            const successfulChecks = monitorChecks.filter(check => check.success).length;
             
-            if (recentChecks.length > 0) {
-                // Get latest check
-                const latestCheck = recentChecks[0];
-                lastChecked = latestCheck.timestamp;
-                
-                // Calculate average response time
-                const totalResponseTime = recentChecks.reduce((sum, check) => {
-                    return sum + (check.responseTime || 0);
-                }, 0);
-                responseTime = Math.round(totalResponseTime / recentChecks.length);
-                
-                // Calculate uptime percentage from recent checks
-                const successfulChecks = recentChecks.filter(check => check.success).length;
-                uptime = (successfulChecks / recentChecks.length) * 100;
-                
-                // Determine status
-                if (latestCheck.success) {
-                    if (responseTime < 500) {
-                        status = 'operational';
-                    } else {
-                        status = 'degraded';
-                    }
-                } else {
-                    status = 'down';
-                }
-            }
+            // Calculate uptime percentage
+            const uptime = totalChecks > 0 
+                ? (successfulChecks / totalChecks * 100).toFixed(2) 
+                : 100;
+            
+            // Determine current status based on most recent check
+            const latestCheck = monitorChecks.sort((a, b) => 
+                b.createdAt - a.createdAt
+            )[0];
+            
+            const status = !latestCheck ? 'unknown' : 
+                latestCheck.success ? 'up' : 'down';
+            
+            // Calculate average response time
+            const avgResponseTime = totalChecks > 0
+                ? (monitorChecks.reduce((sum, check) => sum + check.responseTime, 0) / totalChecks).toFixed(0)
+                : 0;
             
             return {
                 id: monitor._id,
@@ -399,25 +430,20 @@ adminRouter.get('/monitors', authenticateAdmin, async (req, res) => {
                 url: monitor.url,
                 type: monitor.type,
                 status,
-                responseTime,
-                uptime,
-                lastChecked,
-                checkFrequency: Math.round(monitor.interval / 60), // Convert seconds to minutes
+                uptime: parseFloat(uptime),
+                avgResponseTime: parseInt(avgResponseTime),
+                lastChecked: latestCheck ? latestCheck.createdAt : null,
                 website: monitor.website ? {
                     id: monitor.website._id,
                     name: monitor.website.name,
-                    url: monitor.website.url,
-                    status: monitor.website.status
-                } : null,
-                alertThreshold: monitor.alertThreshold,
-                locations: monitor.locations,
-                active: monitor.active
+                    url: monitor.website.url
+                } : null
             };
-        }));
+        });
         
         res.json({ monitors: monitorsWithStats });
     } catch (error) {
-        console.error('Monitors fetch error:', error);
+        console.error('Get admin monitors error:', error);
         res.status(500).json({ error: 'Internal server error' });
     }
 });
@@ -645,6 +671,146 @@ adminRouter.post('/reset-password', async (req, res) => {
         console.error('Admin reset password error:', error);
         res.status(500).json({ error: 'Internal server error' });
     }
+});
+
+// API endpoint for verifying admin email with token
+adminRouter.post('/verify-email', async (req, res) => {
+  try {
+    const { email, token } = req.body;
+    
+    if (!email || !token) {
+      return res.status(400).json({ success: false, message: 'Email and token are required' });
+    }
+    
+    // Find admin by email
+    const admin = await Admin.findOne({ email: email.toLowerCase() });
+    if (!admin) {
+      return res.status(404).json({ success: false, message: 'Admin not found' });
+    }
+    
+    // Verify token
+    if (!admin.verificationToken || admin.verificationToken !== token) {
+      return res.status(400).json({ success: false, message: 'Invalid verification token' });
+    }
+    
+    // Check if token has expired
+    if (admin.verificationTokenExpires && new Date() > admin.verificationTokenExpires) {
+      return res.status(400).json({ success: false, message: 'Verification token has expired. Please request a new one.' });
+    }
+    
+    // Mark email as verified
+    admin.isEmailVerified = true;
+    admin.verificationToken = null;
+    admin.verificationTokenExpires = null;
+    
+    await admin.save();
+    
+    return res.status(200).json({ success: true, message: 'Email verified successfully' });
+  } catch (error) {
+    console.error('Error verifying admin email:', error);
+    return res.status(500).json({ success: false, message: 'Internal server error' });
+  }
+});
+
+// API endpoint for resetting admin password with token
+adminRouter.post('/reset-password', async (req, res) => {
+  try {
+    const { email, token, password } = req.body;
+    
+    if (!email || !token || !password) {
+      return res.status(400).json({ success: false, message: 'Email, token, and password are required' });
+    }
+    
+    // Validate password
+    if (password.length < 8) {
+      return res.status(400).json({ success: false, message: 'Password must be at least 8 characters long' });
+    }
+    
+    // Find admin by email
+    const admin = await Admin.findOne({ email: email.toLowerCase() });
+    if (!admin) {
+      return res.status(404).json({ success: false, message: 'Admin not found' });
+    }
+    
+    // Verify token
+    if (!admin.resetToken || admin.resetToken !== token) {
+      return res.status(400).json({ success: false, message: 'Invalid reset token' });
+    }
+    
+    // Check if token has expired
+    if (admin.resetTokenExpires && new Date() > admin.resetTokenExpires) {
+      return res.status(400).json({ success: false, message: 'Reset token has expired. Please request a new one.' });
+    }
+    
+    // Hash the new password
+    const bcrypt = require('bcrypt');
+    const hashedPassword = await bcrypt.hash(password, 10);
+    
+    // Update password and clear reset token
+    admin.password = hashedPassword;
+    admin.resetToken = null;
+    admin.resetTokenExpires = null;
+    
+    await admin.save();
+    
+    return res.status(200).json({ success: true, message: 'Password reset successfully' });
+  } catch (error) {
+    console.error('Error resetting admin password:', error);
+    return res.status(500).json({ success: false, message: 'Internal server error' });
+  }
+});
+
+// API endpoint to request password reset for admin
+adminRouter.post('/request-password-reset', async (req, res) => {
+  try {
+    const { email } = req.body;
+    
+    if (!email) {
+      return res.status(400).json({ success: false, message: 'Email is required' });
+    }
+    
+    // Find admin by email
+    const admin = await Admin.findOne({ email: email.toLowerCase() });
+    
+    // Don't reveal if email exists or not
+    if (!admin) {
+      return res.status(200).json({ 
+        success: true, 
+        message: 'If your email is registered, a password reset link has been sent to your email'
+      });
+    }
+    
+    // Generate reset token
+    const crypto = require('crypto');
+    const resetToken = crypto.randomBytes(32).toString('hex');
+    
+    // Set expiration for 1 hour from now
+    const resetTokenExpires = new Date();
+    resetTokenExpires.setHours(resetTokenExpires.getHours() + 1);
+    
+    // Update admin with reset token
+    admin.resetToken = resetToken;
+    admin.resetTokenExpires = resetTokenExpires;
+    
+    await admin.save();
+    
+    // Send email with reset link
+    const emailService = require('../utils/emailService');
+    await emailService.sendPasswordResetEmail({
+      email: admin.email,
+      token: resetToken,
+      name: admin.name,
+      userType: 'admin'
+    });
+    
+    return res.status(200).json({ 
+      success: true, 
+      message: 'If your email is registered, a password reset link has been sent to your email'
+    });
+  } catch (error) {
+    console.error('Error requesting password reset for admin:', error);
+    return res.status(500).json({ success: false, message: 'Internal server error' });
+  }
 });
 
 module.exports = { adminRouter, authenticateAdmin };

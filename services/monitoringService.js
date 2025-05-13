@@ -667,8 +667,255 @@ const performAdminCheck = async (monitorId, adminId) => {
     }
 };
 
+/**
+ * Get monitor statistics for a specific monitor
+ * @param {string} monitorId Monitor ID
+ * @param {Object} options Options for fetching statistics
+ * @returns {Object} Monitor statistics
+ */
+const getMonitorStats = async (monitorId, options = {}) => {
+    try {
+        const { days = 30 } = options;
+        
+        // Get the monitor
+        const monitor = await Monitor.findById(monitorId).populate('website');
+        
+        if (!monitor) {
+            throw new Error('Monitor not found');
+        }
+        
+        // Get recent checks
+        const now = new Date();
+        const startDate = new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
+        
+        const checks = await MonitorCheck.find({
+            monitor: monitorId,
+            createdAt: { $gte: startDate }
+        }).sort({ createdAt: 1 });
+        
+        // Calculate statistics
+        const totalChecks = checks.length;
+        const successfulChecks = checks.filter(check => check.success).length;
+        
+        // Calculate uptime percentage
+        const uptime = totalChecks > 0 
+            ? (successfulChecks / totalChecks * 100).toFixed(2) 
+            : 100;
+        
+        // Get average response time
+        const avgResponseTime = totalChecks > 0
+            ? (checks.reduce((sum, check) => sum + check.responseTime, 0) / totalChecks).toFixed(0)
+            : 0;
+        
+        // Get fastest response time
+        const fastestResponseTime = totalChecks > 0
+            ? Math.min(...checks.map(check => check.responseTime))
+            : 0;
+        
+        // Get slowest response time
+        const slowestResponseTime = totalChecks > 0
+            ? Math.max(...checks.map(check => check.responseTime))
+            : 0;
+        
+        // Organize check data by day for charts
+        const dailyData = {};
+        const locations = new Set();
+        
+        // Initialize daily data structure
+        for (let i = 0; i < days; i++) {
+            const date = new Date(now.getTime() - i * 24 * 60 * 60 * 1000);
+            const dateString = date.toISOString().split('T')[0];
+            dailyData[dateString] = {
+                date: dateString,
+                totalChecks: 0,
+                successfulChecks: 0,
+                uptime: 100,
+                avgResponseTime: 0,
+                responseTimeSum: 0
+            };
+        }
+        
+        // Fill in data from checks
+        checks.forEach(check => {
+            const dateString = check.createdAt.toISOString().split('T')[0];
+            
+            if (!dailyData[dateString]) {
+                dailyData[dateString] = {
+                    date: dateString,
+                    totalChecks: 0,
+                    successfulChecks: 0,
+                    uptime: 100,
+                    avgResponseTime: 0,
+                    responseTimeSum: 0
+                };
+            }
+            
+            const dayData = dailyData[dateString];
+            dayData.totalChecks++;
+            
+            if (check.success) {
+                dayData.successfulChecks++;
+            }
+            
+            dayData.responseTimeSum += check.responseTime;
+            dayData.avgResponseTime = Math.round(dayData.responseTimeSum / dayData.totalChecks);
+            dayData.uptime = parseFloat((dayData.successfulChecks / dayData.totalChecks * 100).toFixed(2));
+            
+            // Track unique locations
+            if (check.location) {
+                locations.add(check.location);
+            }
+        });
+        
+        // Convert daily data to array and sort by date
+        const dailyDataArray = Object.values(dailyData).sort((a, b) => 
+            new Date(a.date) - new Date(b.date)
+        );
+        
+        // Get current status
+        const latestCheck = checks.length > 0 
+            ? checks[checks.length - 1] 
+            : null;
+        
+        const status = !latestCheck 
+            ? 'unknown' 
+            : latestCheck.success 
+                ? 'up' 
+                : 'down';
+        
+        // Get open incidents
+        const openIncidents = await Incident.find({
+            monitor: monitorId,
+            resolvedAt: null
+        }).sort({ createdAt: -1 });
+        
+        // Get recent incidents (resolved)
+        const recentIncidents = await Incident.find({
+            monitor: monitorId,
+            resolvedAt: { $ne: null }
+        }).sort({ createdAt: -1 }).limit(10);
+        
+        return {
+            monitor: {
+                id: monitor._id,
+                name: monitor.name,
+                url: monitor.url,
+                type: monitor.type,
+                status,
+                uptime: parseFloat(uptime),
+                website: monitor.website ? {
+                    id: monitor.website._id,
+                    name: monitor.website.name,
+                    url: monitor.website.url
+                } : null
+            },
+            stats: {
+                totalChecks,
+                successfulChecks,
+                uptime: parseFloat(uptime),
+                avgResponseTime: parseInt(avgResponseTime),
+                fastestResponseTime,
+                slowestResponseTime,
+                locations: Array.from(locations),
+                lastChecked: latestCheck ? latestCheck.createdAt : null
+            },
+            charts: {
+                daily: dailyDataArray
+            },
+            incidents: {
+                open: openIncidents,
+                recent: recentIncidents
+            },
+            recentChecks: checks.slice(-50).reverse() // Get last 50 checks, most recent first
+        };
+    } catch (error) {
+        console.error('Error getting monitor stats:', error);
+        throw error;
+    }
+};
+
+/**
+ * Schedule automatic checks for all active monitors
+ */
+const scheduleMonitorChecks = async () => {
+    console.log('Setting up scheduled monitoring checks');
+    
+    // Map to store scheduled jobs
+    const scheduledJobs = new Map();
+    
+    // Run immediately and then every minute after that
+    setInterval(async () => {
+        try {
+            // Get all active monitors
+            const monitors = await Monitor.find({ active: true });
+            
+            const now = new Date();
+            
+            monitors.forEach(async (monitor) => {
+                // Convert interval from minutes to milliseconds
+                const intervalMs = monitor.interval * 60 * 1000;
+                
+                // Get the last check time for this monitor
+                const lastCheck = await MonitorCheck.findOne({ monitor: monitor._id })
+                    .sort({ createdAt: -1 });
+                
+                const lastCheckTime = lastCheck ? lastCheck.createdAt.getTime() : 0;
+                const timeSinceLastCheck = now.getTime() - lastCheckTime;
+                
+                // Check if it's time to run another check
+                if (timeSinceLastCheck >= intervalMs) {
+                    console.log(`Running scheduled check for ${monitor.name} (${monitor._id})`);
+                    
+                    // For each configured location, run a check
+                    monitor.locations.forEach(async (location) => {
+                        try {
+                            // Determine the check method based on monitor type
+                            let checkResult;
+                            
+                            switch (monitor.type) {
+                                case 'http':
+                                case 'https':
+                                    checkResult = await performHttpCheck(monitor, location);
+                                    break;
+                                case 'dns':
+                                    checkResult = await performDnsCheck(monitor, location);
+                                    break;
+                                case 'ssl':
+                                    checkResult = await performSslCheck(monitor, location);
+                                    break;
+                                case 'tcp':
+                                    checkResult = await performTcpCheck(monitor, location);
+                                    break;
+                                case 'ping':
+                                    checkResult = await performPingCheck(monitor, location);
+                                    break;
+                                default:
+                                    checkResult = await performHttpCheck(monitor, location);
+                            }
+                            
+                            // Process the check result (store, create incidents, etc.)
+                            await processCheckResult(monitor, checkResult, null, { scheduled: true, location });
+                            
+                            console.log(`Completed scheduled check for ${monitor.name} from ${location}`);
+                        } catch (error) {
+                            console.error(`Error performing scheduled check for ${monitor.name} from ${location}:`, error);
+                        }
+                    });
+                }
+            });
+        } catch (error) {
+            console.error('Error in scheduled monitoring checks:', error);
+        }
+    }, 60000); // Run every minute
+    
+    console.log('Scheduled monitoring checks initialized');
+};
+
+// Export the functions
 module.exports = {
     performMonitorCheck,
     getAvailableMonitors,
-    performAdminCheck
+    performAdminCheck,
+    getMonitorStats,
+    scheduleMonitorChecks
 }; 

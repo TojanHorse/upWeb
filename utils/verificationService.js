@@ -13,6 +13,14 @@ class VerificationService {
   }
 
   /**
+   * Generate a secure token for email verification or password reset
+   * @returns {string} The generated token
+   */
+  static generateToken() {
+    return crypto.randomBytes(32).toString('hex');
+  }
+
+  /**
    * Check if a user has exceeded daily verification attempts
    * @param {Object} user - The user object
    * @returns {boolean} Whether the user has reached the limit
@@ -40,31 +48,41 @@ class VerificationService {
   }
 
   /**
-   * Cleanup expired verification codes
+   * Cleanup expired verification codes and tokens
    * @returns {Promise<number>} Number of cleaned up codes
    */
   static async cleanupExpiredCodes() {
     try {
       const result = await User.updateMany(
-        { verificationCodeExpires: { $lt: new Date() } },
+        { 
+          $or: [
+            { verificationCodeExpires: { $lt: new Date() } },
+            { verificationTokenExpires: { $lt: new Date() } },
+            { resetTokenExpires: { $lt: new Date() } }
+          ]
+        },
         { 
           $set: { 
             verificationCode: null,
-            verificationCodeExpires: null
+            verificationCodeExpires: null,
+            verificationToken: null,
+            verificationTokenExpires: null,
+            resetToken: null,
+            resetTokenExpires: null
           }
         }
       );
       
-      console.log(`Cleaned up ${result.modifiedCount} expired verification codes`);
+      console.log(`Cleaned up ${result.modifiedCount} expired verification codes and tokens`);
       return result.modifiedCount;
     } catch (error) {
-      console.error('Error cleaning up expired codes:', error);
+      console.error('Error cleaning up expired codes and tokens:', error);
       return 0;
     }
   }
 
   /**
-   * Request an email verification code for a user
+   * Request an email verification for a user with a clickable link
    * @param {string} userId - The user's ID
    * @returns {Promise<Object>} Result of the request
    */
@@ -92,23 +110,28 @@ class VerificationService {
         };
       }
       
-      // Generate a verification code
-      const verificationCode = this.generateVerificationCode();
+      // Generate a verification token
+      const verificationToken = this.generateToken();
       
-      // Set expiration for 10 minutes from now (changed from 15)
-      const verificationCodeExpires = new Date();
-      verificationCodeExpires.setMinutes(verificationCodeExpires.getMinutes() + 10);
+      // Set expiration for 24 hours from now
+      const verificationTokenExpires = new Date();
+      verificationTokenExpires.setHours(verificationTokenExpires.getHours() + 24);
       
       // Update the user's verification information
-      user.verificationCode = verificationCode;
-      user.verificationCodeExpires = verificationCodeExpires;
+      user.verificationToken = verificationToken;
+      user.verificationTokenExpires = verificationTokenExpires;
       user.verificationAttempts += 1;
       user.lastVerificationAttempt = new Date();
       
       await user.save();
       
-      // Send the verification email
-      const emailResult = await this.sendVerificationEmail(user.email, user.name, verificationCode);
+      // Send the verification email with link
+      const emailResult = await emailService.sendVerificationEmail({
+        email: user.email,
+        token: verificationToken,
+        name: user.name,
+        userType: 'user'
+      });
       
       if (!emailResult) {
         return { 
@@ -119,7 +142,7 @@ class VerificationService {
       
       return { 
         success: true, 
-        message: 'Verification code has been sent to your email address'
+        message: 'Verification email has been sent to your email address. Please check your inbox.'
       };
     } catch (error) {
       console.error('Error requesting verification:', error);
@@ -128,44 +151,46 @@ class VerificationService {
   }
 
   /**
-   * Verify a user's email with the provided code
-   * @param {string} userId - The user's ID
-   * @param {string} code - The verification code
+   * Verify a user's email with the provided token
+   * @param {string} email - The user's email
+   * @param {string} token - The verification token
    * @returns {Promise<Object>} Result of the verification
    */
-  static async verifyEmail(userId, code) {
+  static async verifyEmailWithToken(email, token) {
     try {
-      // Cleanup expired codes first
+      // Cleanup expired tokens first
       await this.cleanupExpiredCodes();
       
       // Find the user
-      const user = await User.findById(userId);
+      const user = await User.findOne({ email: email.toLowerCase() });
       if (!user) {
         return { success: false, message: 'User not found' };
       }
       
       // Check if email is already verified
       if (user.isEmailVerified) {
-        return { success: false, message: 'Email is already verified' };
+        return { success: true, message: 'Email is already verified' };
       }
       
-      // Check if the verification code exists and hasn't expired
-      if (!user.verificationCode || !user.verificationCodeExpires) {
-        return { success: false, message: 'No verification code found or code expired. Please request a new code.' };
+      // Check if the verification token exists and hasn't expired
+      if (!user.verificationToken || !user.verificationTokenExpires) {
+        return { success: false, message: 'Invalid or expired verification link. Please request a new verification email.' };
       }
       
-      // Check if code has expired
-      if (new Date() > user.verificationCodeExpires) {
-        return { success: false, message: 'Verification code has expired. Please request a new code.' };
+      // Check if token has expired
+      if (new Date() > user.verificationTokenExpires) {
+        return { success: false, message: 'Verification link has expired. Please request a new verification email.' };
       }
       
-      // Check if the code matches
-      if (user.verificationCode !== code) {
-        return { success: false, message: 'Invalid verification code' };
+      // Check if the token matches
+      if (user.verificationToken !== token) {
+        return { success: false, message: 'Invalid verification link' };
       }
       
       // Mark the email as verified and clear verification data
       user.isEmailVerified = true;
+      user.verificationToken = null;
+      user.verificationTokenExpires = null;
       user.verificationCode = null;
       user.verificationCodeExpires = null;
       
@@ -176,58 +201,119 @@ class VerificationService {
       
       return { success: true, message: 'Email verified successfully' };
     } catch (error) {
-      console.error('Error verifying email:', error);
+      console.error('Error verifying email with token:', error);
       return { success: false, message: 'Internal server error' };
     }
   }
 
   /**
-   * Send a verification email
-   * @param {string} email - The recipient's email
-   * @param {string} name - The recipient's name
-   * @param {string} code - The verification code
-   * @returns {Promise<boolean>} Whether the email was sent successfully
+   * Request a password reset for a user
+   * @param {string} email - The user's email
+   * @returns {Promise<Object>} Result of the request
    */
-  static async sendVerificationEmail(email, name, code) {
+  static async requestPasswordReset(email) {
     try {
-      const subject = 'Verify Your Email - UplinkBe';
+      // Cleanup expired tokens first
+      await this.cleanupExpiredCodes();
+
+      // Find user by email
+      const user = await User.findOne({ email: email.toLowerCase() });
+      if (!user) {
+        // Don't reveal if email exists for security reasons
+        return { success: true, message: 'If your email is registered, a password reset link has been sent to your email' };
+      }
+
+      // Generate a reset token
+      const resetToken = this.generateToken();
       
-      const text = `
-        Hello ${name},
-        
-        Your email verification code is: ${code}
-        
-        This code is valid for 10 minutes.
-        
-        If you didn't request this code, please ignore this email.
-        
-        Thank you,
-        The UplinkBe Team
-      `;
+      // Set expiration for 1 hour from now
+      const resetTokenExpires = new Date();
+      resetTokenExpires.setHours(resetTokenExpires.getHours() + 1);
       
-      const html = `
-        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-          <h2 style="color: #3182ce;">Verify Your Email Address</h2>
-          <p>Hello ${name},</p>
-          <p>Please use the following code to verify your email address:</p>
-          
-          <div style="margin: 20px 0; text-align: center;">
-            <div style="background-color: #f8fafc; padding: 15px; border-radius: 5px; font-size: 24px; letter-spacing: 5px; font-weight: bold;">
-              ${code}
-            </div>
-          </div>
-          
-          <p>This code is valid for <strong>10 minutes</strong>.</p>
-          <p>If you didn't request this code, please ignore this email.</p>
-          
-          <p>Thank you,<br>The UplinkBe Team</p>
-        </div>
-      `;
+      // Update the user's reset information
+      user.resetToken = resetToken;
+      user.resetTokenExpires = resetTokenExpires;
       
-      return await emailService.sendEmail({ to: email, subject, text, html });
+      await user.save();
+      
+      // Send the reset email with link
+      const emailResult = await emailService.sendPasswordResetEmail({
+        email: user.email,
+        token: resetToken,
+        name: user.name,
+        userType: 'user'
+      });
+      
+      if (!emailResult) {
+        return { 
+          success: false, 
+          message: 'Failed to send password reset email. Email service might not be configured correctly.'
+        };
+      }
+      
+      return { 
+        success: true, 
+        message: 'If your email is registered, a password reset link has been sent to your email'
+      };
     } catch (error) {
-      console.error('Error sending verification email:', error);
-      return false;
+      console.error('Error requesting password reset:', error);
+      return { success: false, message: 'Internal server error' };
+    }
+  }
+
+  /**
+   * Reset a user's password with the provided token
+   * @param {string} email - The user's email
+   * @param {string} token - The reset token
+   * @param {string} newPassword - The new password
+   * @returns {Promise<Object>} Result of the reset operation
+   */
+  static async resetPasswordWithToken(email, token, newPassword) {
+    try {
+      // Cleanup expired tokens first
+      await this.cleanupExpiredCodes();
+      
+      // Find the user
+      const user = await User.findOne({ email: email.toLowerCase() });
+      if (!user) {
+        return { success: false, message: 'Invalid or expired reset link' };
+      }
+      
+      // Check if the reset token exists and hasn't expired
+      if (!user.resetToken || !user.resetTokenExpires) {
+        return { success: false, message: 'Invalid or expired reset link. Please request a new password reset.' };
+      }
+      
+      // Check if token has expired
+      if (new Date() > user.resetTokenExpires) {
+        return { success: false, message: 'Password reset link has expired. Please request a new password reset.' };
+      }
+      
+      // Check if the token matches
+      if (user.resetToken !== token) {
+        return { success: false, message: 'Invalid password reset link' };
+      }
+      
+      // Hash the new password
+      const bcrypt = require('bcrypt');
+      const hashedPassword = await bcrypt.hash(newPassword, 10);
+      
+      // Update user's password
+      user.password = hashedPassword;
+      
+      // Clear reset data
+      user.resetToken = null;
+      user.resetTokenExpires = null;
+      
+      await user.save();
+      
+      return { 
+        success: true, 
+        message: 'Your password has been successfully reset. You can now log in with your new password.'
+      };
+    } catch (error) {
+      console.error('Error resetting password with token:', error);
+      return { success: false, message: 'Internal server error' };
     }
   }
 
@@ -276,116 +362,7 @@ class VerificationService {
     }
   }
 
-  /**
-   * Request a password reset code for a user
-   * @param {string} email - The user's email
-   * @returns {Promise<Object>} Result of the request
-   */
-  static async requestPasswordReset(email) {
-    try {
-      // Cleanup expired codes first
-      await this.cleanupExpiredCodes();
-
-      // Find user by email
-      const user = await User.findOne({ email: email.toLowerCase() });
-      if (!user) {
-        // Don't reveal if email exists for security reasons
-        return { success: true, message: 'If your email is registered, a password reset code has been sent to your email' };
-      }
-
-      // Generate a verification code
-      const resetCode = this.generateVerificationCode();
-      
-      // Set expiration for 10 minutes from now
-      const resetCodeExpires = new Date();
-      resetCodeExpires.setMinutes(resetCodeExpires.getMinutes() + 10);
-      
-      // Update the user's reset information
-      user.resetCode = resetCode;
-      user.resetCodeExpires = resetCodeExpires;
-      
-      await user.save();
-      
-      // Send the reset email
-      const emailResult = await this.sendPasswordResetEmail(user.email, user.name, resetCode);
-      
-      if (!emailResult) {
-        return { 
-          success: false, 
-          message: 'Failed to send password reset email. Email service might not be configured correctly.'
-        };
-      }
-      
-      return { 
-        success: true, 
-        message: 'If your email is registered, a password reset code has been sent to your email'
-      };
-    } catch (error) {
-      console.error('Error requesting password reset:', error);
-      return { success: false, message: 'Internal server error' };
-    }
-  }
-
-  /**
-   * Reset a user's password with the provided code
-   * @param {string} email - The user's email
-   * @param {string} code - The reset code
-   * @returns {Promise<Object>} Result of the reset operation
-   */
-  static async resetPassword(email, code) {
-    try {
-      // Cleanup expired codes first
-      await this.cleanupExpiredCodes();
-      
-      // Find the user
-      const user = await User.findOne({ email: email.toLowerCase() });
-      if (!user) {
-        return { success: false, message: 'Invalid or expired reset code' };
-      }
-      
-      // Check if the reset code exists and hasn't expired
-      if (!user.resetCode || !user.resetCodeExpires) {
-        return { success: false, message: 'No reset code found or code expired. Please request a new code.' };
-      }
-      
-      // Check if code has expired
-      if (new Date() > user.resetCodeExpires) {
-        return { success: false, message: 'Reset code has expired. Please request a new code.' };
-      }
-      
-      // Check if the code matches
-      if (user.resetCode !== code) {
-        return { success: false, message: 'Invalid reset code' };
-      }
-      
-      // Generate a new random password
-      const newPassword = this.generateRandomPassword();
-      
-      // Hash the new password
-      const bcrypt = require('bcrypt');
-      const hashedPassword = await bcrypt.hash(newPassword, 10);
-      
-      // Update user's password
-      user.password = hashedPassword;
-      
-      // Clear reset data
-      user.resetCode = null;
-      user.resetCodeExpires = null;
-      
-      await user.save();
-      
-      // Send the new password in email
-      await this.sendPasswordRecoveryEmail(user.email, user.name, newPassword);
-      
-      return { 
-        success: true, 
-        message: 'A new password has been sent to your email address'
-      };
-    } catch (error) {
-      console.error('Error resetting password:', error);
-      return { success: false, message: 'Internal server error' };
-    }
-  }
+  // Helper methods
 
   /**
    * Generate a random password
@@ -401,13 +378,7 @@ class VerificationService {
     return password;
   }
 
-  /**
-   * Send a password reset email
-   * @param {string} email - The recipient's email
-   * @param {string} name - The recipient's name
-   * @param {string} code - The reset code
-   * @returns {Promise<boolean>} Whether the email was sent successfully
-   */
+  // Kept for backward compatibility
   static async sendPasswordResetEmail(email, name, code) {
     try {
       const subject = 'Password Reset Request - UplinkBe';
@@ -451,13 +422,7 @@ class VerificationService {
     }
   }
 
-  /**
-   * Send a password recovery email with the password
-   * @param {string} email - The recipient's email
-   * @param {string} name - The recipient's name
-   * @param {string} password - The user's new plain text password
-   * @returns {Promise<boolean>} Whether the email was sent successfully
-   */
+  // Kept for backward compatibility
   static async sendPasswordRecoveryEmail(email, name, password) {
     try {
       const subject = 'Your Password Recovery - UplinkBe';

@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Email Verification - UpWeb Monitoring</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #f5f7f9;
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+        }
+        .container {
+            background-color: white;
+            border-radius: 10px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+            padding: 40px;
+            max-width: 500px;
+            width: 90%;
+            text-align: center;
+        }
+        .logo {
+            margin-bottom: 20px;
+        }
+        h1 {
+            color: #333;
+            margin-bottom: 20px;
+        }
+        .status {
+            margin: 30px 0;
+            padding: 15px;
+            border-radius: 5px;
+            font-weight: 500;
+        }
+        .success {
+            background-color: #e6f7e6;
+            color: #2d862d;
+        }
+        .error {
+            background-color: #fde8e8;
+            color: #e53e3e;
+        }
+        .pending {
+            background-color: #e6f0ff;
+            color: #1a56db;
+        }
+        .btn {
+            display: inline-block;
+            background-color: #1a56db;
+            color: white;
+            padding: 12px 24px;
+            border-radius: 4px;
+            text-decoration: none;
+            font-weight: 500;
+            margin-top: 20px;
+            transition: background-color 0.2s;
+        }
+        .btn:hover {
+            background-color: #1346c2;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="logo">
+            <h2>UpWeb Monitoring</h2>
+        </div>
+        <h1>Email Verification</h1>
+        <div id="verification-status" class="status pending">
+            Verifying your email address...
+        </div>
+        <a href="/" class="btn" id="login-btn" style="display: none;">Go to Login</a>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            // Get verification token from URL
+            const urlParams = new URLSearchParams(window.location.search);
+            const token = urlParams.get('token');
+            const email = urlParams.get('email');
+            const userType = urlParams.get('type') || 'contributor';
+            
+            if (!token || !email) {
+                showError('Invalid verification link. Missing required parameters.');
+                return;
+            }
+            
+            // Call verification API
+            verifyEmail(email, token, userType);
+        });
+        
+        async function verifyEmail(email, token, userType) {
+            try {
+                const endpoint = userType === 'user' 
+                    ? '/api/users/verify-email' 
+                    : '/api/contributors/verify-email';
+                
+                const response = await fetch(endpoint, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ email, token })
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    showSuccess('Your email has been successfully verified!');
+                } else {
+                    showError(data.message || 'Failed to verify email. Please try again.');
+                }
+            } catch (error) {
+                showError('An error occurred during verification. Please try again later.');
+                console.error('Verification error:', error);
+            }
+        }
+        
+        function showSuccess(message) {
+            const statusEl = document.getElementById('verification-status');
+            statusEl.className = 'status success';
+            statusEl.textContent = message;
+            document.getElementById('login-btn').style.display = 'inline-block';
+        }
+        
+        function showError(message) {
+            const statusEl = document.getElementById('verification-status');
+            statusEl.className = 'status error';
+            statusEl.textContent = message;
+            document.getElementById('login-btn').style.display = 'inline-block';
+        }
+    </script>
+</body>
+</html> 

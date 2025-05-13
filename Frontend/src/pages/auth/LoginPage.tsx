@@ -19,7 +19,7 @@ const LoginPage: React.FC = () => {
   const navigate = useNavigate();
   const from = (location.state as any)?.from?.pathname || '/';
   
-  const { register, handleSubmit, formState: { errors } } = useForm<LoginFormData>();
+  const { register, handleSubmit, formState: { errors }, reset } = useForm<LoginFormData>();
   
   const onSubmit = async (data: LoginFormData) => {
     try {
@@ -29,6 +29,12 @@ const LoginPage: React.FC = () => {
     } catch (err) {
       console.error('Login error:', err);
     }
+  };
+
+  const handleRoleChange = (role: UserRole) => {
+    setSelectedRole(role);
+    // Clear form fields when switching roles
+    reset({ email: '', password: '' });
   };
 
   return (
@@ -59,7 +65,7 @@ const LoginPage: React.FC = () => {
             <div className="grid grid-cols-3 gap-2">
               <button
                 type="button"
-                onClick={() => setSelectedRole('user')}
+                onClick={() => handleRoleChange('user')}
                 className={`flex flex-col items-center justify-center p-3 rounded-md border ${
                   selectedRole === 'user'
                     ? 'bg-primary-900/30 border-primary-500 text-primary-400'
@@ -72,7 +78,7 @@ const LoginPage: React.FC = () => {
               
               <button
                 type="button"
-                onClick={() => setSelectedRole('contributor')}
+                onClick={() => handleRoleChange('contributor')}
                 className={`flex flex-col items-center justify-center p-3 rounded-md border ${
                   selectedRole === 'contributor'
                     ? 'bg-secondary-900/30 border-secondary-500 text-secondary-400'
@@ -85,7 +91,7 @@ const LoginPage: React.FC = () => {
               
               <button
                 type="button"
-                onClick={() => setSelectedRole('admin')}
+                onClick={() => handleRoleChange('admin')}
                 className={`flex flex-col items-center justify-center p-3 rounded-md border ${
                   selectedRole === 'admin'
                     ? 'bg-error-900/30 border-error-500 text-error-400'

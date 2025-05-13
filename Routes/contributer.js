@@ -11,22 +11,56 @@ const SECRET = process.env.CONTRIBUTOR_JWT_SECRET;
 
 // Middleware to verify contributor token
 const authenticateContributor = (req, res, next) => {
-    const authHeader = req.headers.authorization;
-    if (!authHeader) {
-        return res.status(401).json({ error: 'Authorization header missing' });
-    }
-
-    const token = authHeader.split(' ')[1];
-    if (!token) {
-        return res.status(401).json({ error: 'Token missing' });
-    }
-
     try {
+        const authHeader = req.headers.authorization;
+        if (!authHeader) {
+            return res.status(401).json({ 
+                error: 'Authorization header missing', 
+                message: 'Please login to access this resource'
+            });
+        }
+
+        const parts = authHeader.split(' ');
+        if (parts.length !== 2 || parts[0] !== 'Bearer') {
+            return res.status(401).json({ 
+                error: 'Invalid authorization format', 
+                message: 'Authorization header must be in format: Bearer <token>'
+            });
+        }
+
+        const token = parts[1];
+        if (!token) {
+            return res.status(401).json({ 
+                error: 'Token missing', 
+                message: 'No token provided in authorization header'
+            });
+        }
+
         const decoded = jwt.verify(token, SECRET);
+        
+        // Ensure we have a contributorId in the token payload
+        if (!decoded.contributorId) {
+            return res.status(401).json({ 
+                error: 'Invalid token payload', 
+                message: 'Token missing required contributor information'
+            });
+        }
+        
         req.contributor = decoded;
+        console.log('Contributor authenticated:', decoded.contributorId);
         next();
     } catch (error) {
-        return res.status(401).json({ error: 'Invalid token' });
+        console.error('Authentication error:', error.message);
+        if (error.name === 'TokenExpiredError') {
+            return res.status(401).json({ 
+                error: 'Token expired', 
+                message: 'Your session has expired. Please login again'
+            });
+        }
+        return res.status(401).json({ 
+            error: 'Invalid token', 
+            message: 'Authentication failed. Please login again'
+        });
     }
 };
 
@@ -366,29 +400,63 @@ contributorRouter.get('/profile', authenticateContributor, async (req, res) => {
 });
 
 // Request email verification link
-contributorRouter.post('/verify/request', authenticateContributor, async (req, res) => {
+contributorRouter.post('/verify/request', async (req, res) => {
     try {
-        const contributorId = req.contributor.contributorId;
-        const contributor = await Contributor.findById(contributorId);
+        // Try to get the user either from authentication or email in request
+        let contributorId;
+        let contributor;
         
+        // If authenticated, use the token
+        if (req.contributor && req.contributor.contributorId) {
+            contributorId = req.contributor.contributorId;
+            contributor = await Contributor.findById(contributorId);
+        } 
+        // Otherwise, use email from request
+        else if (req.body && req.body.email) {
+            contributor = await Contributor.findOne({ email: req.body.email });
+        }
+        
+        // Check if contributor exists
         if (!contributor) {
-            return res.status(404).json({ error: 'Contributor not found' });
+            return res.status(404).json({ 
+                error: 'Contributor not found. Please check your email or register if you don\'t have an account.',
+                success: false
+            });
+        }
+        
+        // Fix: check if email exists before using it
+        if (!contributor.email) {
+            return res.status(400).json({
+                error: 'Contributor email is missing',
+                success: false
+            });
+        }
+        
+        // Check if already verified
+        if (contributor.isEmailVerified) {
+            return res.status(200).json({ 
+                message: 'Email is already verified',
+                success: true,
+                isVerified: true
+            });
         }
         
         // Generate a verification token
         const verificationToken = jwt.sign(
             { contributorId: contributor._id },
             SECRET,
-            { expiresIn: '10m' }
+            { expiresIn: '1h' } // Extended to 1 hour to give users more time
         );
         
-        // Set expiration for 10 minutes from now
+        // Set expiration for 1 hour from now
         const verificationTokenExpires = new Date();
-        verificationTokenExpires.setMinutes(verificationTokenExpires.getMinutes() + 10);
+        verificationTokenExpires.setHours(verificationTokenExpires.getHours() + 1);
         
-        // Update the contributor's verification information
+        // Update the contributor's verification information and remove any code-based verification
         contributor.verificationToken = verificationToken;
         contributor.verificationTokenExpires = verificationTokenExpires;
+        contributor.verificationCode = null;
+        contributor.verificationCodeExpires = null;
         contributor.verificationAttempts = (contributor.verificationAttempts || 0) + 1;
         contributor.lastVerificationAttempt = new Date();
         
@@ -397,6 +465,8 @@ contributorRouter.post('/verify/request', authenticateContributor, async (req, r
         // Create verification URL
         const baseUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
         const verificationUrl = `${baseUrl}/contributor/verify?token=${verificationToken}`;
+        
+        console.log("Sending verification email to:", contributor.email, "with URL:", verificationUrl);
         
         // Send the verification email with link
         const emailResult = await emailService.sendEmail({
@@ -408,7 +478,7 @@ contributorRouter.post('/verify/request', authenticateContributor, async (req, r
                 Please click the link below to verify your email address:
                 ${verificationUrl}
                 
-                This link is valid for 10 minutes.
+                This link is valid for 1 hour.
                 
                 If you didn't request this verification, please ignore this email.
                 
@@ -427,7 +497,7 @@ contributorRouter.post('/verify/request', authenticateContributor, async (req, r
                         </a>
                     </div>
                     
-                    <p>This link is valid for <strong>10 minutes</strong>.</p>
+                    <p>This link is valid for <strong>1 hour</strong>.</p>
                     <p>If the button doesn't work, you can copy and paste the following link into your browser:</p>
                     <p style="word-break: break-all; background-color: #f8fafc; padding: 10px; border-radius: 4px;">${verificationUrl}</p>
                     
@@ -439,15 +509,19 @@ contributorRouter.post('/verify/request', authenticateContributor, async (req, r
         });
         
         if (!emailResult) {
+            console.error("Failed to send verification email to:", contributor.email);
             return res.status(500).json({ 
                 error: 'Failed to send verification email. Email service might not be configured correctly.',
                 success: false
             });
         }
+
+        console.log("Verification email sent successfully to:", contributor.email);
         
         res.json({ 
             message: 'Verification link has been sent to your email address',
-            success: true 
+            success: true,
+            verificationUrl: verificationUrl // Include the URL for debugging and direct access
         });
     } catch (error) {
         console.error('Request verification error:', error);
@@ -458,7 +532,47 @@ contributorRouter.post('/verify/request', authenticateContributor, async (req, r
 // Add a new route for verification via link
 contributorRouter.get('/verify-email', async (req, res) => {
     try {
-        const { token } = req.query;
+        const { email, token } = req.body;
+        
+        if (!email || !token) {
+            return res.status(400).json({ success: false, message: 'Email and token are required' });
+        }
+        
+        // Find contributor by email
+        const contributor = await Contributor.findOne({ email: email.toLowerCase() });
+        if (!contributor) {
+            return res.status(404).json({ success: false, message: 'Contributor not found' });
+        }
+        
+        // Verify token
+        if (!contributor.verificationToken || contributor.verificationToken !== token) {
+            return res.status(400).json({ success: false, message: 'Invalid verification token' });
+        }
+        
+        // Check if token has expired
+        if (contributor.verificationTokenExpires && new Date() > contributor.verificationTokenExpires) {
+            return res.status(400).json({ success: false, message: 'Verification token has expired. Please request a new one.' });
+        }
+        
+        // Mark email as verified
+        contributor.isEmailVerified = true;
+        contributor.verificationToken = null;
+        contributor.verificationTokenExpires = null;
+        
+        await contributor.save();
+        
+        return res.status(200).json({ success: true, message: 'Email verified successfully' });
+    } catch (error) {
+        console.error('Error verifying contributor email:', error);
+        return res.status(500).json({ success: false, message: 'Internal server error' });
+    }
+});
+
+// Simplified verification endpoint that works with both token in query or body
+contributorRouter.post('/verify', async (req, res) => {
+    try {
+        // Try to get token from different sources
+        const token = req.body.token || req.query.token;
         
         if (!token) {
             return res.status(400).json({ error: 'Verification token is required' });
@@ -487,8 +601,7 @@ contributorRouter.get('/verify-email', async (req, res) => {
             return res.status(200).json({ 
                 message: 'Email is already verified', 
                 success: true, 
-                isVerified: true,
-                redirectUrl: '/contributor/dashboard'
+                isVerified: true
             });
         }
         
@@ -496,121 +609,31 @@ contributorRouter.get('/verify-email', async (req, res) => {
         contributor.isEmailVerified = true;
         contributor.verificationToken = null;
         contributor.verificationTokenExpires = null;
+        contributor.verificationCode = null;
+        contributor.verificationCodeExpires = null;
         
         await contributor.save();
         
-        // We don't redirect here, we just return success and a redirect URL for the frontend to handle
-        res.json({ 
-            message: 'Email verified successfully', 
-            success: true, 
-            isVerified: true,
-            redirectUrl: '/contributor/dashboard'
+        // Send a confirmation email
+        await emailService.sendEmail({
+            to: contributor.email,
+            subject: 'Email Verification Successful - UplinkBe',
+            text: `
+                Hello ${contributor.name},
+                
+                Your email has been successfully verified!
+                
+                You now have full access to all features of the UplinkBe platform.
+                
+                Thank you,
+                The UplinkBe Team
+            `
         });
-    } catch (error) {
-        console.error('Email verification error:', error);
-        res.status(500).json({ error: 'Internal server error' });
-    }
-});
-
-// Keep the original code verification route for backward compatibility
-contributorRouter.post('/verify', authenticateContributor, async (req, res) => {
-    try {
-        const contributorId = req.contributor.contributorId;
-        const { code } = req.body;
-        
-        if (!code) {
-            return res.status(400).json({ error: 'Verification code is required' });
-        }
-        
-        const contributor = await Contributor.findById(contributorId);
-        if (!contributor) {
-            return res.status(404).json({ error: 'Contributor not found' });
-        }
-        
-        // Check if email is already verified
-        if (contributor.isEmailVerified) {
-            return res.status(400).json({ 
-                error: 'Email is already verified', 
-                success: false, 
-                isVerified: true 
-            });
-        }
-        
-        // Handle both token and code verification
-        // For backward compatibility, we'll try to use the verification code if it exists
-        // and fall back to token verification if a code doesn't exist
-        
-        let isVerified = false;
-        
-        // Check if we have a verification code (old method)
-        if (contributor.verificationCode) {
-            // Check if code has expired
-            if (new Date() > contributor.verificationCodeExpires) {
-                return res.status(400).json({ 
-                    error: 'Verification code has expired. Please request a new code.', 
-                    success: false, 
-                    isVerified: false 
-                });
-            }
-            
-            // Check if the code matches
-            if (contributor.verificationCode === code) {
-                isVerified = true;
-            } else {
-                return res.status(400).json({ 
-                    error: 'Invalid verification code', 
-                    success: false, 
-                    isVerified: false 
-                });
-            }
-        }
-        // Check if we have a verification token (new method)
-        else if (contributor.verificationToken) {
-            // We can't verify with a code if we're using the token method
-            return res.status(400).json({ 
-                error: 'Please use the verification link sent to your email', 
-                success: false, 
-                isVerified: false,
-                useLink: true
-            });
-        }
-        else {
-            return res.status(400).json({ 
-                error: 'No verification code found. Please request a new code.', 
-                success: false, 
-                isVerified: false 
-            });
-        }
-        
-        if (isVerified) {
-            // Mark the email as verified and clear verification data
-            contributor.isEmailVerified = true;
-            contributor.verificationCode = null;
-            contributor.verificationCodeExpires = null;
-            
-            await contributor.save();
-            
-            // Send a confirmation email
-            await emailService.sendEmail({
-                to: contributor.email,
-                subject: 'Email Verification Successful - UplinkBe',
-                text: `
-                    Hello ${contributor.name},
-                    
-                    Your email has been successfully verified!
-                    
-                    You now have full access to all features of the UplinkBe platform.
-                    
-                    Thank you,
-                    The UplinkBe Team
-                `
-            });
-        }
         
         res.json({
-            message: 'Verification result',
-            success: isVerified,
-            isEmailVerified: isVerified
+            message: 'Email verified successfully',
+            success: true,
+            isEmailVerified: true
         });
     } catch (error) {
         console.error('Verification error:', error);
@@ -741,43 +764,221 @@ contributorRouter.post('/forgot-password', async (req, res) => {
 // Reset password using token
 contributorRouter.post('/reset-password', async (req, res) => {
     try {
-        const { token, newPassword } = req.body;
+        const { email, token, password } = req.body;
         
-        if (!token || !newPassword) {
-            return res.status(400).json({ error: 'Token and new password are required' });
+        if (!email || !token || !password) {
+            return res.status(400).json({ success: false, message: 'Email, token, and password are required' });
+        }
+        
+        // Validate password
+        if (password.length < 8) {
+            return res.status(400).json({ success: false, message: 'Password must be at least 8 characters long' });
+        }
+        
+        // Find contributor by email
+        const contributor = await Contributor.findOne({ email: email.toLowerCase() });
+        if (!contributor) {
+            return res.status(404).json({ success: false, message: 'Contributor not found' });
         }
         
         // Verify token
-        let decoded;
-        try {
-            decoded = jwt.verify(token, SECRET);
-        } catch (tokenError) {
-            return res.status(400).json({ error: 'Invalid or expired token. Please request a new reset link.' });
+        if (!contributor.resetToken || contributor.resetToken !== token) {
+            return res.status(400).json({ success: false, message: 'Invalid reset token' });
         }
         
-        // Find contributor
-        const contributor = await Contributor.findById(decoded.contributorId);
+        // Check if token has expired
+        if (contributor.resetTokenExpires && new Date() > contributor.resetTokenExpires) {
+            return res.status(400).json({ success: false, message: 'Reset token has expired. Please request a new one.' });
+        }
+        
+        // Hash the new password
+        const bcrypt = require('bcrypt');
+        const hashedPassword = await bcrypt.hash(password, 10);
+        
+        // Update password and clear reset token
+        contributor.password = hashedPassword;
+        contributor.resetToken = null;
+        contributor.resetTokenExpires = null;
+        
+        await contributor.save();
+        
+        return res.status(200).json({ success: true, message: 'Password reset successfully' });
+    } catch (error) {
+        console.error('Error resetting contributor password:', error);
+        return res.status(500).json({ success: false, message: 'Internal server error' });
+    }
+});
+
+// API endpoint to request password reset (with token)
+contributorRouter.post('/request-password-reset', async (req, res) => {
+    try {
+        const { email } = req.body;
+        
+        if (!email) {
+            return res.status(400).json({ success: false, message: 'Email is required' });
+        }
+        
+        // Find contributor by email
+        const contributor = await Contributor.findOne({ email: email.toLowerCase() });
+        
+        // Don't reveal if email exists or not
+        if (!contributor) {
+            return res.status(200).json({ 
+                success: true, 
+                message: 'If your email is registered, a password reset link has been sent to your email'
+            });
+        }
+        
+        // Generate reset token
+        const crypto = require('crypto');
+        const resetToken = crypto.randomBytes(32).toString('hex');
+        
+        // Set expiration for 1 hour from now
+        const resetTokenExpires = new Date();
+        resetTokenExpires.setHours(resetTokenExpires.getHours() + 1);
+        
+        // Update contributor with reset token
+        contributor.resetToken = resetToken;
+        contributor.resetTokenExpires = resetTokenExpires;
+        
+        await contributor.save();
+        
+        // Send email with reset link
+        await emailService.sendPasswordResetEmail({
+            email: contributor.email,
+            token: resetToken,
+            name: contributor.name,
+            userType: 'contributor'
+        });
+        
+        return res.status(200).json({ 
+            success: true, 
+            message: 'If your email is registered, a password reset link has been sent to your email'
+        });
+    } catch (error) {
+        console.error('Error requesting password reset for contributor:', error);
+        return res.status(500).json({ success: false, message: 'Internal server error' });
+    }
+});
+
+// Direct verification endpoint - can be used for troubleshooting or admin override
+contributorRouter.post('/verify-direct', async (req, res) => {
+    try {
+        const { email } = req.body;
+        
+        if (!email) {
+            return res.status(400).json({ error: 'Email is required' });
+        }
+        
+        const contributor = await Contributor.findOne({ email });
         if (!contributor) {
             return res.status(404).json({ error: 'Contributor not found' });
         }
         
-        // Check if reset token matches and hasn't expired
-        if (contributor.resetCode !== token || new Date() > contributor.resetCodeExpires) {
-            return res.status(400).json({ error: 'Invalid or expired token. Please request a new reset link.' });
+        // Check if already verified
+        if (contributor.isEmailVerified) {
+            return res.status(200).json({ 
+                message: 'Email is already verified',
+                success: true,
+                isVerified: true
+            });
         }
         
-        // Hash the new password
-        const hashedPassword = await bcrypt.hash(newPassword, 10);
+        // Mark email as verified directly
+        contributor.isEmailVerified = true;
+        contributor.verificationToken = null;
+        contributor.verificationTokenExpires = null;
+        contributor.verificationCode = null;
+        contributor.verificationCodeExpires = null;
         
-        // Update password and clear reset tokens
-        contributor.password = hashedPassword;
-        contributor.resetCode = null;
-        contributor.resetCodeExpires = null;
         await contributor.save();
         
-        res.json({ message: 'Password reset successful. You can now login with your new password.' });
+        res.json({ 
+            message: 'Email has been verified directly',
+            success: true,
+            isVerified: true
+        });
     } catch (error) {
-        console.error('Reset password error:', error);
+        console.error('Direct verification error:', error);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+});
+
+// Get all monitors for the authenticated contributor
+contributorRouter.get('/monitors', authenticateContributor, async (req, res) => {
+    try {
+        const contributorId = req.contributor.contributorId;
+        
+        // Find all websites this contributor has access to
+        const { Website } = require('../Database/module.websites');
+        const { Monitor } = require('../Database/module.monitor');
+        const { MonitorCheck } = require('../Database/module.monitorCheck');
+        
+        const websites = await Website.find({ contributors: contributorId });
+        const websiteIds = websites.map(w => w._id);
+        
+        // Find all monitors for these websites
+        const monitors = await Monitor.find({ website: { $in: websiteIds } })
+            .populate('website', 'name url')
+            .sort({ createdAt: -1 });
+        
+        // Get all recent checks for uptime calculation
+        const now = new Date();
+        const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+        
+        const monitorIds = monitors.map(m => m._id);
+        const recentChecks = await MonitorCheck.find({
+            monitor: { $in: monitorIds },
+            createdAt: { $gte: thirtyDaysAgo }
+        });
+        
+        // Calculate uptime and status for each monitor
+        const monitorsWithStats = monitors.map(monitor => {
+            const monitorChecks = recentChecks.filter(check => 
+                check.monitor.toString() === monitor._id.toString()
+            );
+            
+            const totalChecks = monitorChecks.length;
+            const successfulChecks = monitorChecks.filter(check => check.success).length;
+            
+            // Calculate uptime percentage
+            const uptime = totalChecks > 0 
+                ? (successfulChecks / totalChecks * 100).toFixed(2) 
+                : 100;
+            
+            // Determine current status based on most recent check
+            const latestCheck = monitorChecks.sort((a, b) => 
+                b.createdAt - a.createdAt
+            )[0];
+            
+            const status = !latestCheck ? 'unknown' : 
+                latestCheck.success ? 'up' : 'down';
+            
+            // Calculate average response time
+            const avgResponseTime = totalChecks > 0
+                ? (monitorChecks.reduce((sum, check) => sum + check.responseTime, 0) / totalChecks).toFixed(0)
+                : 0;
+            
+            return {
+                id: monitor._id,
+                name: monitor.name,
+                url: monitor.url,
+                type: monitor.type,
+                status,
+                uptime: parseFloat(uptime),
+                avgResponseTime: parseInt(avgResponseTime),
+                lastChecked: latestCheck ? latestCheck.createdAt : null,
+                website: monitor.website ? {
+                    id: monitor.website._id,
+                    name: monitor.website.name,
+                    url: monitor.website.url
+                } : null
+            };
+        });
+        
+        res.json({ monitors: monitorsWithStats });
+    } catch (error) {
+        console.error('Get contributor monitors error:', error);
         res.status(500).json({ error: 'Internal server error' });
     }
 });
