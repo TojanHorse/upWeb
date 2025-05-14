@@ -91,6 +91,13 @@ const monitorSchema = z.object({
   contentCheck: z.string().optional()
 });
 
+// OTP verification schema
+const otpVerificationSchema = z.object({
+  email: z.string().email({ message: "Invalid email address format" }),
+  otp: z.string().length(6, { message: "OTP must be 6 digits" })
+    .refine(val => /^\d+$/.test(val), { message: "OTP must contain only digits" })
+});
+
 // Validation middleware
 const validate = (schema) => (req, res, next) => {
   try {
@@ -126,5 +133,6 @@ module.exports = {
   adminProfileUpdateSchema,
   websiteSchema,
   monitorSchema,
+  otpVerificationSchema,
   validate
 }; 

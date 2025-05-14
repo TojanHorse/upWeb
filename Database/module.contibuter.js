@@ -50,6 +50,14 @@ const contributorSchema = new Schema({
         type: Date,
         default: null
     },
+    verificationOTP: {
+        type: String,
+        default: null
+    },
+    verificationOTPExpires: {
+        type: Date,
+        default: null
+    },
     resetCode: {
         type: String,
         default: null
@@ -73,6 +81,11 @@ const contributorSchema = new Schema({
     updatedAt: {
         type: Date,
         default: Date.now
+    },
+    clerkId: {
+        type: String,
+        unique: true,
+        sparse: true
     }
 });
 

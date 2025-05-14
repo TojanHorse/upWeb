@@ -1,0 +1,457 @@
+# UplinkBe - Comprehensive Project Documentation
+
+## Project Overview
+
+UplinkBe is a decentralized website monitoring platform that allows users to monitor their websites for uptime and performance. The system consists of a backend API with support for multiple user roles (users, contributors, and admins), real-time monitoring capabilities, and a WebSocket-based notification system.
+
+## System Architecture
+
+### Core Components
+
+1. **Backend API**: Node.js + Express REST API
+2. **Authentication**: Clerk Authentication
+3. **Database**: MongoDB (with fallback options)
+4. **Real-time Updates**: Socket.io WebSockets
+5. **Monitoring Service**: Custom monitoring service for website checks
+6. **Terminal Monitoring Tool**: CLI-based monitoring interface
+
+### Project Structure
+
+```
+UplinkBe/
+├── server.js                 # Main server entry point
+├── start-backend.js          # Server startup script with environment info
+├── monitor-cli.js            # Terminal-based monitoring tool
+├── Database/                 # MongoDB models and connection
+│   ├── module.db.js          # Database connection handler
+│   ├── module.user.js        # User model
+│   ├── module.contibuter.js  # Contributor model
+│   ├── module.admin.js       # Admin model
+│   ├── module.monitor.js     # Monitor model
+│   ├── module.monitorCheck.js # Monitor check logs
+│   ├── module.incident.js    # Incident records
+│   ├── module.payment.js     # Payment records
+│   ├── module.subscription.js # Subscription details
+│   ├── module.websites.js    # Website records
+│   ├── module.userWallet.js  # User wallet
+│   └── module.contibutorWallet.js # Contributor wallet
+├── Routes/                   # API route handlers
+│   ├── User.js               # User routes
+│   ├── contributer.js        # Contributor routes
+│   ├── admin.js              # Admin routes
+│   └── monitor.js            # Monitor routes
+├── services/                 # Core services
+│   ├── monitoringService.js  # Website monitoring service
+│   └── websocketService.js   # WebSocket communication
+├── utils/                    # Utility functions
+│   ├── verificationService.js # OTP and verification utils
+│   └── emailService.js       # Email notification service
+└── public/                   # Static files
+```
+
+## Authentication System
+
+UplinkBe uses Clerk Authentication as the primary authentication provider, with a JWT-based system for specific role-based operations.
+
+### Authentication Flow
+
+1. **Clerk Authentication**:
+   - User signs up/logs in via Clerk
+   - Clerk provides authentication token
+   - Backend validates token through Clerk SDK
+   - User role and permissions determined from Clerk metadata
+
+2. **JWT System**:
+   - Role-specific JWTs used for certain operations
+   - Three separate JWT secrets for different roles:
+     - `JWT_USER_SECRET` - Regular users
+     - `JWT_CONTRIBUTOR_SECRET` - Contributors
+     - `JWT_ADMIN_SECRET` - Administrators
+
+3. **Auth Middleware**:
+   - Extracts and verifies auth token from request headers
+   - Sets `req.auth` with user identity and role information
+   - Protects routes based on role requirements
+
+## Database Models
+
+### User Model
+- Basic user information (name, email)
+- Auth details (userId from Clerk)
+- Subscription status
+- Website monitoring preferences
+- Notification settings
+
+### Contributor Model
+- Monitoring resources offered
+- Performance metrics
+- Payment details
+- Availability settings
+- Skills/capabilities
+
+### Admin Model
+- Administrative permissions
+- System monitoring capabilities
+- User management access
+
+### Monitor Model
+- Website URL
+- Monitoring interval
+- Status (up/down)
+- Response time history
+- Uptime percentage
+- Owner details
+- Contributor assignments
+
+### MonitorCheck Model
+- Individual check records
+- Timestamp
+- Status
+- Response time
+- Error details (if any)
+- HTTP status code
+
+### Incident Model
+- Downtime records
+- Start/end times
+- Resolution details
+- Affected monitors
+- Severity level
+
+### Website Model
+- Website details
+- Owner
+- Associated monitors
+- Technology stack
+- Contact information
+
+### Payment and Wallet Models
+- Transaction records
+- Wallet balances
+- Payment methods
+- Withdrawal history
+
+## API Routes
+
+### User Routes (`/api/user`)
+
+| Method | Endpoint                 | Description                               | Auth Required |
+|--------|--------------------------|-------------------------------------------|--------------|
+| POST   | /signup                  | Register new user                         | No           |
+| POST   | /signin                  | User login                                | No           |
+| GET    | /profile                 | Get user profile                          | Yes          |
+| PUT    | /update                  | Update user profile                       | Yes          |
+| GET    | /dashboard               | User dashboard data                       | Yes          |
+| GET    | /monitors                | List user's monitors                      | Yes          |
+| POST   | /monitors                | Create new monitor                        | Yes          |
+| GET    | /monitors/:id            | Get specific monitor                      | Yes          |
+| PUT    | /monitors/:id            | Update monitor                            | Yes          |
+| DELETE | /monitors/:id            | Delete monitor                            | Yes          |
+| GET    | /wallet                  | Get user wallet                           | Yes          |
+| POST   | /verify                  | Verify email with OTP                     | Yes          |
+| POST   | /subscriptions           | Create subscription                       | Yes          |
+| GET    | /subscriptions           | Get subscription details                  | Yes          |
+
+### Contributor Routes (`/api/contributor`)
+
+| Method | Endpoint                 | Description                               | Auth Required |
+|--------|--------------------------|-------------------------------------------|--------------|
+| POST   | /signup                  | Register as contributor                   | No           |
+| POST   | /signin                  | Contributor login                         | No           |
+| GET    | /profile                 | Get contributor profile                   | Yes          |
+| PUT    | /update                  | Update contributor profile                | Yes          |
+| GET    | /dashboard               | Contributor dashboard                     | Yes          |
+| GET    | /websites                | Get assigned websites                     | Yes          |
+| POST   | /websites/:id/check      | Check website status                      | Yes          |
+| GET    | /monitors                | Get monitoring assignments                | Yes          |
+| PUT    | /availability            | Update availability                       | Yes          |
+| GET    | /wallet                  | Get contributor wallet                    | Yes          |
+| POST   | /withdraw                | Withdraw earnings                         | Yes          |
+| GET    | /earnings                | View earnings history                     | Yes          |
+
+### Admin Routes (`/api/admin`)
+
+| Method | Endpoint                 | Description                               | Auth Required |
+|--------|--------------------------|-------------------------------------------|--------------|
+| POST   | /signin                  | Admin login                               | No           |
+| GET    | /dashboard               | Admin dashboard                           | Yes          |
+| GET    | /users                   | Get all users                             | Yes          |
+| GET    | /users/:id               | Get specific user                         | Yes          |
+| PUT    | /users/:id               | Update user                               | Yes          |
+| DELETE | /users/:id               | Delete user                               | Yes          |
+| GET    | /contributors            | Get all contributors                      | Yes          |
+| PUT    | /contributors/:id        | Update contributor                        | Yes          |
+| GET    | /websites                | Get all websites                          | Yes          |
+| PUT    | /websites/:id/status     | Update website status                     | Yes          |
+| GET    | /payments                | View all payments                         | Yes          |
+| POST   | /payments/approve        | Approve payment                           | Yes          |
+
+### Monitor Routes (`/api/monitor`)
+
+| Method | Endpoint                 | Description                               | Auth Required |
+|--------|--------------------------|-------------------------------------------|--------------|
+| GET    | /available               | Get available monitors                    | No           |
+| POST   | /                        | Create monitor                            | Yes          |
+| GET    | /:id                     | Get monitor details                       | Yes          |
+| PUT    | /:id                     | Update monitor                            | Yes          |
+| DELETE | /:id                     | Delete monitor                            | Yes          |
+| POST   | /check/:id               | Manually check monitor                    | Yes          |
+| GET    | /history/:id             | Get monitor check history                 | Yes          |
+| GET    | /stats/:id               | Get monitor statistics                    | Yes          |
+| GET    | /incidents               | Get all incidents                         | Yes          |
+| POST   | /incidents/:id/resolve   | Resolve incident                          | Yes          |
+
+## Monitoring Service
+
+The monitoring service is the core feature of UplinkBe, responsible for checking website status at regular intervals and recording performance metrics.
+
+### Key Features
+- Configurable check intervals
+- HTTP status monitoring
+- Response time tracking
+- Uptime calculation
+- Incident generation
+- Real-time notifications via WebSockets
+- Historical data storage
+
+### Monitoring Flow
+1. System loads all active monitors from database
+2. Schedules checks based on each monitor's interval
+3. Performs HTTP requests to target URLs
+4. Records status (up/down) and response time
+5. Compares with previous checks to detect changes
+6. Creates incidents for downtime events
+7. Notifies relevant users via WebSockets
+8. Stores check results in database
+
+## WebSocket Service
+
+Real-time communication is handled through a WebSocket service built on Socket.io.
+
+### Event Types
+- `monitor:status` - Monitor status changes
+- `incident:new` - New incident created
+- `incident:resolved` - Incident resolved
+- `check:completed` - Monitor check completed
+- `user:notification` - User-specific notifications
+
+### Connection Flow
+1. Client connects to WebSocket endpoint
+2. Authentication performed using token
+3. Client joins user-specific room
+4. Real-time updates sent to relevant rooms
+5. Client can subscribe to specific monitor events
+
+## Terminal Monitoring Tool
+
+A command-line interface for monitoring websites without requiring a frontend application.
+
+### Commands
+- `list` - List all monitors
+- `check <id>` - Check specific monitor
+- `checkall` - Check all monitors
+- `add <url> <name>` - Add new monitor
+- `history <id>` - View monitor history
+- `exit` - Exit the program
+
+## Environment Configuration
+
+The system uses environment variables for configuration:
+
+```
+# MongoDB Configuration
+MONGODB_URI=mongodb://localhost:27017/uplinkdb
+DB_NAME=Downtimemonitor
+
+# Server Configuration
+PORT=3001
+NODE_ENV=development
+
+# Clerk Authentication
+CLERK_SECRET_KEY=your_clerk_secret_key
+CLERK_PUBLISHABLE_KEY=your_clerk_publishable_key
+
+# JWT Configuration
+JWT_SECRET=your_jwt_secret_key
+JWT_EXPIRES_IN=7d
+JWT_ADMIN_SECRET=your_admin_jwt_secret
+JWT_CONTRIBUTOR_SECRET=your_contributor_jwt_secret
+JWT_USER_SECRET=your_user_jwt_secret
+
+# Email Configuration
+EMAIL_HOST=smtp.example.com
+EMAIL_PORT=587
+EMAIL_USER=your_email@example.com
+EMAIL_PASSWORD=your_email_password
+EMAIL_FROM=noreply@yourservice.com
+
+# Cors Configuration
+ALLOWED_ORIGINS=http://localhost:5173
+```
+
+## Clerk Authentication Integration
+
+Clerk is used for user authentication and management. The integration allows for:
+- Secure user signup/login
+- Email verification
+- OAuth providers
+- Session management
+- User roles and permissions
+
+### Setup Requirements for Frontend
+1. Install Clerk React SDK: `@clerk/clerk-react`
+2. Configure with publishable key: `VITE_CLERK_PUBLISHABLE_KEY`
+3. Wrap app with `<ClerkProvider>`
+4. Use Clerk components: `<SignIn>`, `<SignUp>`, `<UserButton>`
+5. Use hooks: `useUser`, `useAuth`, `useSession`
+
+### Authorization Flow
+1. User logs in through Clerk UI
+2. Clerk issues session token
+3. Token sent with API requests in Authorization header
+4. Backend validates token with Clerk SDK
+5. Backend extracts user role from Clerk metadata
+6. Access granted based on role permissions
+
+## Building the Frontend
+
+### Key Frontend Requirements
+
+1. **Authentication**
+   - Implement Clerk authentication
+   - Handle user roles (user, contributor, admin)
+   - Protect routes based on authentication state
+
+2. **Dashboard Views**
+   - User dashboard with monitor status
+   - Contributor dashboard with assignments
+   - Admin dashboard with system overview
+
+3. **Monitor Management**
+   - Create, edit, delete monitors
+   - View monitor status and history
+   - Set check intervals and notification preferences
+
+4. **Real-time Updates**
+   - Connect to WebSocket service
+   - Display real-time status changes
+   - Show notifications for incidents
+
+5. **User Management**
+   - Profile settings
+   - Subscription management
+   - Wallet and payment interface
+
+6. **Responsive Design**
+   - Mobile-friendly interface
+   - Accessible UI components
+   - Optimized loading states
+
+### Recommended Tech Stack
+
+- **Framework**: React + TypeScript
+- **Build Tool**: Vite
+- **State Management**: Zustand/Redux Toolkit
+- **UI Components**: Tailwind CSS + Headless UI
+- **Data Fetching**: React Query/SWR
+- **Routing**: React Router
+- **Forms**: React Hook Form + Zod
+- **WebSockets**: Socket.io Client
+- **Authentication**: Clerk React SDK
+
+### API Integration
+
+All API requests should:
+1. Include proper authentication header
+2. Handle loading/error states
+3. Update local state appropriately
+4. Provide optimistic updates where possible
+
+### WebSocket Integration
+
+1. Connect to Socket.io server on login
+2. Subscribe to relevant events
+3. Update UI in real-time based on events
+4. Reconnect on connection loss
+5. Clean up connection on logout
+
+## Security Considerations
+
+1. **Authentication**
+   - Always use HTTPS
+   - Implement proper token handling
+   - Set appropriate token expiration
+   - Use secure cookie settings
+
+2. **Authorization**
+   - Validate permissions on every request
+   - Implement role-based access control
+   - Prevent privilege escalation
+
+3. **Data Protection**
+   - Validate and sanitize all inputs
+   - Implement rate limiting
+   - Use parameterized queries
+   - Apply principle of least privilege
+
+4. **Frontend Security**
+   - Prevent XSS with proper escaping
+   - Implement CSP headers
+   - Use CSRF protection
+   - Avoid exposing sensitive data in client code
+
+## Development Guidelines
+
+1. **Code Style**
+   - Follow consistent naming conventions
+   - Use TypeScript for type safety
+   - Document complex functions
+   - Write unit tests for core logic
+
+2. **API Consumption**
+   - Create API service layer
+   - Centralize request/response handling
+   - Implement retry logic for failed requests
+   - Cache responses where appropriate
+
+3. **State Management**
+   - Use global state sparingly
+   - Prefer local component state when possible
+   - Implement proper loading states
+   - Handle error states gracefully
+
+4. **Performance**
+   - Optimize bundle size
+   - Implement code splitting
+   - Use memoization for expensive calculations
+   - Virtualize long lists
+
+5. **Accessibility**
+   - Use semantic HTML
+   - Implement keyboard navigation
+   - Provide appropriate ARIA attributes
+   - Test with screen readers
+
+## Deployment Considerations
+
+1. **Environment Setup**
+   - Configure environment variables
+   - Set up proper CORS settings
+   - Configure proper SSL/TLS
+   - Set up appropriate logging
+
+2. **CI/CD Pipeline**
+   - Implement automated testing
+   - Set up build process
+   - Configure deployment pipeline
+   - Implement feature flags for staged rollouts
+
+3. **Monitoring**
+   - Set up error tracking
+   - Implement performance monitoring
+   - Configure uptime checks
+   - Set up alerting system
+
+## Conclusion
+
+UplinkBe provides a comprehensive backend system for website monitoring with multiple user roles, real-time updates, and detailed performance metrics. The frontend implementation should focus on creating an intuitive user experience that leverages the powerful backend API while maintaining security, performance, and accessibility best practices. 

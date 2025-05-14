@@ -52,63 +52,61 @@ const canAccessMonitor = async (req, res, next) => {
 // Create a new monitor
 monitorRouter.post('/', authenticateContributor, async (req, res) => {
     try {
-        const { websiteId, name, url, type, interval, locations, expectedStatusCode, alertContacts } = req.body;
+        const { name, url, checkFrequency, description } = req.body;
+        const contributorId = req.contributor.contributorId;
+        
+        console.log('Create monitor request:', { name, url, contributorId });
         
         // Validate required fields
-        if (!websiteId || !name || !url) {
-            return res.status(400).json({ error: 'Website ID, name, and URL are required' });
-        }
-        
-        // Check if website belongs to this contributor
-        const website = await Website.findById(websiteId);
-        if (!website || !website.contributors.includes(req.contributor.contributorId)) {
-            return res.status(403).json({ error: 'You do not have permission for this website' });
-        }
-        
-        // Check if active subscription exists for this website
-        const subscription = await Subscription.findOne({
-            website: websiteId,
-            contributor: req.contributor.contributorId,
-            status: 'active'
-        });
-        
-        if (!subscription) {
-            return res.status(403).json({ error: 'No active subscription for this website' });
-        }
-        
-        // Check if reached maximum monitors for the subscription
-        const existingMonitors = await Monitor.countDocuments({ website: websiteId });
-        if (existingMonitors >= subscription.maxMonitors) {
+        if (!name || !url) {
             return res.status(400).json({ 
-                error: `Maximum number of monitors (${subscription.maxMonitors}) reached for this subscription` 
+                error: 'Name and URL are required for creating a monitor',
+                message: 'Please provide both a name and URL for the monitor'
             });
         }
+
+        // Find websites this contributor has access to
+        const websites = await Website.find({ contributors: contributorId });
         
+        if (!websites || websites.length === 0) {
+            return res.status(404).json({ 
+                error: 'No website found for this contributor', 
+                message: 'You need to have access to at least one website to create a monitor'
+            });
+        }
+
+        // Use the first website (most contributors will have only one)
+        const website = websites[0];
+        console.log('Using website for monitor:', website.name);
+
         // Create new monitor
         const newMonitor = new Monitor({
-            website: websiteId,
+            website: website._id,
             name,
             url,
-            type: type || 'https',
-            interval: interval || subscription.checkInterval,
-            locations: locations || ['us-east'],
-            expectedStatusCode: expectedStatusCode || 200,
-            alertContacts: alertContacts || []
+            type: 'http',
+            interval: checkFrequency || 15,
+            description: description || '',
+            active: true,
+            expectedStatusCode: 200,
+            locations: ['us-east']
         });
         
         await newMonitor.save();
-        
-        // Add monitor to subscription
-        subscription.monitors.push(newMonitor._id);
-        await subscription.save();
+        console.log('Monitor created successfully:', newMonitor._id);
         
         res.status(201).json({
             message: 'Monitor created successfully',
-            monitor: newMonitor
+            monitor: {
+                id: newMonitor._id,
+                name: newMonitor.name,
+                url: newMonitor.url,
+                interval: newMonitor.interval
+            }
         });
     } catch (error) {
         console.error('Create monitor error:', error);
-        res.status(500).json({ error: 'Internal server error' });
+        res.status(500).json({ error: 'Internal server error', message: error.message });
     }
 });
 

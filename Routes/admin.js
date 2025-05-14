@@ -813,4 +813,90 @@ adminRouter.post('/request-password-reset', async (req, res) => {
   }
 });
 
+// Add dashboard endpoint
+adminRouter.get('/dashboard', authenticateAdmin, async (req, res) => {
+    try {
+        const adminId = req.admin.adminId;
+        console.log('Fetching dashboard data for admin:', adminId);
+        
+        // Get basic admin info
+        const admin = await Admin.findById(adminId);
+        if (!admin) {
+            return res.status(404).json({ error: 'Admin not found' });
+        }
+        
+        // Get system stats
+        const { User } = require('../Database/module.user');
+        const { Contributor } = require('../Database/module.contibuter');
+        const { Website } = require('../Database/module.websites');
+        const { Monitor } = require('../Database/module.monitor');
+        const { MonitorCheck } = require('../Database/module.monitorCheck');
+        
+        const userCount = await User.countDocuments();
+        const contributorCount = await Contributor.countDocuments();
+        const websiteCount = await Website.countDocuments();
+        const monitorCount = await Monitor.countDocuments();
+        const checkCount = await MonitorCheck.countDocuments();
+        
+        // Get recent monitor checks for system status
+        const now = new Date();
+        const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+        
+        const recentChecks = await MonitorCheck.find({
+            timestamp: { $gte: oneDayAgo }
+        }).sort({ timestamp: -1 }).limit(500);
+        
+        // Calculate system uptime
+        const totalChecks = recentChecks.length;
+        const successfulChecks = recentChecks.filter(check => check.success).length;
+        const systemUptime = totalChecks > 0 
+            ? (successfulChecks / totalChecks * 100).toFixed(2) 
+            : 100;
+        
+        // Get status of most recent check for each monitor
+        const monitors = await Monitor.find().sort({ createdAt: -1 }).limit(10);
+        const monitorStatuses = [];
+        
+        for (const monitor of monitors) {
+            const latestCheck = await MonitorCheck.findOne({ 
+                monitor: monitor._id 
+            }).sort({ timestamp: -1 });
+            
+            monitorStatuses.push({
+                id: monitor._id,
+                name: monitor.name,
+                url: monitor.url,
+                status: latestCheck?.success ? 'up' : 'down',
+                lastChecked: latestCheck?.timestamp
+            });
+        }
+        
+        res.json({
+            admin: {
+                id: admin._id,
+                name: admin.name,
+                email: admin.email,
+                role: admin.role
+            },
+            stats: {
+                users: userCount,
+                contributors: contributorCount,
+                websites: websiteCount,
+                monitors: monitorCount,
+                checks: checkCount,
+                uptime: parseFloat(systemUptime)
+            },
+            recentMonitors: monitorStatuses,
+            systemStatus: {
+                uptime: parseFloat(systemUptime),
+                checksToday: totalChecks,
+                successfulChecksToday: successfulChecks
+            }
+        });
+    } catch (error) {
+        console.error('Admin dashboard error:', error);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+});
+
 module.exports = { adminRouter, authenticateAdmin };

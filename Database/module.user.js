@@ -34,6 +34,30 @@ const userSchema = new Schema({
         type: Date,
         default: null
     },
+    verificationToken: {
+        type: String,
+        default: null
+    },
+    verificationTokenExpires: {
+        type: Date,
+        default: null
+    },
+    verificationOTP: {
+        type: String,
+        default: null
+    },
+    verificationOTPExpires: {
+        type: Date,
+        default: null
+    },
+    resetToken: {
+        type: String,
+        default: null
+    },
+    resetTokenExpires: {
+        type: Date,
+        default: null
+    },
     resetCode: {
         type: String,
         default: null
@@ -57,6 +81,11 @@ const userSchema = new Schema({
     updatedAt: {
         type: Date,
         default: Date.now
+    },
+    clerkId: {
+        type: String,
+        unique: true,
+        sparse: true
     }
 });
 

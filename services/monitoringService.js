@@ -13,6 +13,18 @@ const emailService = require('../utils/emailService');
 // Amount paid to users per check in cents/paise
 const PAYMENT_PER_CHECK = 5; // 5 cents per check
 
+// Reference to WebSocket Service (will be set during initialization)
+let websocketService = null;
+
+/**
+ * Set the WebSocket service instance for real-time updates
+ * @param {Object} wsService - WebSocket service instance
+ */
+function setWebSocketService(wsService) {
+  websocketService = wsService;
+  console.log('WebSocket service connected to monitoring service');
+}
+
 /**
  * Perform an HTTP/HTTPS check
  * @param {Object} monitor Monitor object
@@ -229,7 +241,7 @@ const performPingCheck = async (monitor, location) => {
  * @param {Object} locationInfo Additional location information
  * @returns {Object} Processed check result
  */
-const processCheckResult = async (monitor, checkResult, userId, locationInfo = {}) => {
+const processCheckResult = async (monitor, checkResult, userId = null, locationInfo = {}) => {
     try {
         // Create a new check record
         const monitorCheck = new MonitorCheck({
@@ -238,82 +250,118 @@ const processCheckResult = async (monitor, checkResult, userId, locationInfo = {
             success: checkResult.success,
             statusCode: checkResult.statusCode,
             responseTime: checkResult.responseTime,
-            errorMessage: checkResult.errorMessage,
-            location: checkResult.location,
-            locationInfo: locationInfo, // Store detailed location info
-            performedBy: userId
+            errorMessage: checkResult.error || null,
+            message: checkResult.message || (checkResult.success ? 'Check completed successfully' : 'Check failed'),
+            location: locationInfo.location || 'system',
+            region: locationInfo.region || 'unknown',
+            timestamp: new Date(),
+            performedBy: userId || '000000000000000000000000' // System user ID when null
         });
         
         await monitorCheck.save();
         
-        // If check failed, create or update an incident
-        if (!checkResult.success) {
-            // Check if there's an existing ongoing incident for this monitor
-            let incident = await Incident.findOne({
+        // Get the previous check to compare status
+        const previousCheck = await MonitorCheck.findOne({ 
+            monitor: monitor._id,
+            _id: { $ne: monitorCheck._id } // Exclude the current check
+        }).sort({ createdAt: -1 });
+        
+        // Determine if an incident should be created or resolved
+        const wasDown = previousCheck ? !previousCheck.success : false;
+        const isDown = !checkResult.success;
+        
+        // If monitor was up and now is down, create an incident
+        if (!wasDown && isDown) {
+            // Create a new incident
+            const incident = new Incident({
                 monitor: monitor._id,
-                status: 'ongoing'
+                website: monitor.website,
+                startCheck: monitorCheck._id,
+                startTime: new Date(),
+                reason: checkResult.errorMessage,
+                location: checkResult.location,
+                locationInfo: locationInfo
             });
             
-            if (!incident) {
-                // Create a new incident
-                incident = new Incident({
-                    monitor: monitor._id,
-                    website: monitor.website,
-                    status: 'ongoing',
-                    startTime: new Date(),
-                    lastChecked: new Date(),
-                    errorDetails: checkResult.errorMessage,
-                    location: checkResult.location,
-                    locationInfo: locationInfo // Store detailed location info
+            await incident.save();
+            monitorCheck.incidentCreated = true;
+            await monitorCheck.save();
+            
+            // Update monitor status
+            monitor.status = 'down';
+            monitor.lastChecked = new Date();
+            await monitor.save();
+            
+            // Send alert for new incident
+            await sendMonitorStatusAlert(
+                monitor, 
+                'down', 
+                checkResult.errorMessage, 
+                { location: checkResult.location, ...locationInfo }
+            );
+            
+            // Emit WebSocket event if websocketService is available
+            if (websocketService) {
+                websocketService.emitToWebsite(monitor.website, 'monitor:update', {
+                    monitorId: monitor._id,
+                    websiteId: monitor.website,
+                    status: 'down',
+                    responseTime: checkResult.responseTime,
+                    reason: checkResult.errorMessage,
+                    timestamp: new Date(),
+                    location: checkResult.location
                 });
-                
-                // Update monitor status to down
-                monitor.status = 'down';
-                monitor.lastDownTime = new Date();
-                await monitor.save();
-                
-                await incident.save();
-                
-                // Send email alert about the new incident
-                await sendMonitorStatusAlert(monitor, 'down', checkResult.errorMessage, locationInfo);
-            } else {
-                // Update existing incident
-                incident.lastChecked = new Date();
-                incident.errorDetails = checkResult.errorMessage;
-                await incident.save();
             }
-        } else {
-            // Check was successful
-            
-            // Check if there's an existing ongoing incident that should be resolved
-            const incident = await Incident.findOne({
+        }
+        // If monitor was down and now is up, resolve the incident
+        else if (wasDown && !isDown) {
+            // Find and resolve the open incident
+            const openIncident = await Incident.findOne({
                 monitor: monitor._id,
-                status: 'ongoing'
+                resolvedAt: null
             });
             
-            if (incident) {
-                // Resolve the incident
-                incident.status = 'resolved';
-                incident.resolvedTime = new Date();
-                incident.downtime = Math.round((new Date() - incident.startTime) / 1000); // in seconds
-                await incident.save();
+            if (openIncident) {
+                openIncident.endCheck = monitorCheck._id;
+                openIncident.resolvedAt = new Date();
+                openIncident.duration = openIncident.resolvedAt - openIncident.startTime;
+                await openIncident.save();
                 
-                // Update monitor status to up
+                // Update monitor status
                 monitor.status = 'up';
-                monitor.lastUpTime = new Date();
+                monitor.lastChecked = new Date();
                 await monitor.save();
                 
-                // Send email alert about the resolved incident
-                await sendMonitorStatusAlert(monitor, 'up', 'Monitor is back online', locationInfo);
+                // Send alert for resolved incident
+                await sendMonitorStatusAlert(
+                    monitor, 
+                    'up', 
+                    'Monitor is back online', 
+                    { location: checkResult.location, ...locationInfo }
+                );
+                
+                // Emit WebSocket event if websocketService is available
+                if (websocketService) {
+                    websocketService.emitToWebsite(monitor.website, 'monitor:update', {
+                        monitorId: monitor._id,
+                        websiteId: monitor.website,
+                        status: 'up',
+                        responseTime: checkResult.responseTime,
+                        timestamp: new Date(),
+                        location: checkResult.location
+                    });
+                }
             }
         }
         
-        // Process payment for this check
-        await processPaymentForCheck(monitorCheck);
+        // Process payment for user if check was performed by a user
+        if (userId && userId !== '000000000000000000000000' && !locationInfo.scheduled) {
+            await processPaymentForCheck(monitorCheck);
+        }
         
         return monitorCheck;
     } catch (error) {
-        console.error('Error processing check result:', error);
+        console.warn('Error processing check result:', error);
         throw error;
     }
 };
@@ -343,14 +391,20 @@ const processPaymentForCheck = async (monitorCheck) => {
             throw new Error('User wallet not found');
         }
         
+        // Get the website owner
+        const website = await Website.findById(monitor.website);
+        if (!website) {
+            throw new Error('Website not found');
+        }
+        
         // Create a payment record
         const payment = new Payment({
             amount: PAYMENT_PER_CHECK,
             currency: 'USD',
             type: 'payment',
             status: 'completed',
-            sender: monitor.website,
-            senderType: 'Website',
+            sender: website.owner, // Use website owner as sender
+            senderType: 'User', // Use User type instead of Website
             receiver: monitorCheck.performedBy,
             receiverType: 'User',
             description: `Payment for monitoring check of ${monitor.name}`,
@@ -454,28 +508,32 @@ const sendMonitorStatusAlert = async (monitor, status, reason, locationInfo = {}
 };
 
 /**
- * Perform a website check based on monitor type
- * @param {string} monitorId ID of monitor to check
- * @param {string} userId ID of user performing the check
- * @param {string} location Basic location code (e.g., 'us-east')
- * @param {Object} locationInfo Detailed location information from the user's browser
+ * Perform a check for a monitor
+ * @param {string} monitorId Monitor ID
+ * @param {string} userId User ID performing the check
+ * @param {Object} options Optional parameters
  * @returns {Object} Check result
  */
-const performMonitorCheck = async (monitorId, userId, location, locationInfo = {}) => {
+const performMonitorCheck = async (monitorId, userId, options = {}) => {
     try {
+        // Find monitor
         const monitor = await Monitor.findById(monitorId);
-        
         if (!monitor) {
             throw new Error('Monitor not found');
         }
         
-        if (!monitor.active) {
-            throw new Error('Monitor is not active');
+        // Find website
+        const website = await Website.findById(monitor.website);
+        if (!website) {
+            throw new Error('Website not found');
         }
         
-        let checkResult;
+        // Default location if not provided
+        const location = options.location || 'manual-check';
         
         // Perform check based on monitor type
+        let checkResult;
+        
         switch (monitor.type) {
             case 'http':
             case 'https':
@@ -494,11 +552,18 @@ const performMonitorCheck = async (monitorId, userId, location, locationInfo = {
                 checkResult = await performPingCheck(monitor, location);
                 break;
             default:
-                throw new Error(`Unsupported monitor type: ${monitor.type}`);
+                checkResult = await performHttpCheck(monitor, location);
+                break;
         }
         
-        // Process the check result
-        return await processCheckResult(monitor, checkResult, userId, locationInfo);
+        // Process result
+        try {
+            const monitorCheck = await processCheckResult(monitor, checkResult, userId, { location });
+            return { ...checkResult, checkId: monitorCheck._id };
+        } catch (error) {
+            console.error('Error processing check result:', error);
+            throw error;
+        }
     } catch (error) {
         console.error('Error performing monitor check:', error);
         throw error;
@@ -911,11 +976,109 @@ const scheduleMonitorChecks = async () => {
     console.log('Scheduled monitoring checks initialized');
 };
 
+/**
+ * Initialize the monitoring system
+ * This is called during server startup
+ */
+const initializeMonitoring = async () => {
+    console.log('Initializing monitoring service...');
+    
+    try {
+        // Get counts for monitoring system components
+        const monitorCount = await Monitor.countDocuments();
+        const checkCount = await MonitorCheck.countDocuments();
+        const incidentCount = await Incident.countDocuments();
+        
+        console.log(`Found ${monitorCount} monitors, ${checkCount} checks, and ${incidentCount} incidents`);
+        
+        // Get active incident count
+        const activeIncidentCount = await Incident.countDocuments({ resolvedAt: null });
+        console.log(`There are currently ${activeIncidentCount} active incidents`);
+        
+        // Check monitor statuses
+        const monitors = await Monitor.find().populate('website');
+        
+        // Group monitors by status
+        const statusCounts = {
+            up: 0,
+            down: 0,
+            unknown: 0
+        };
+        
+        // Check the latest status for each monitor
+        for (const monitor of monitors) {
+            const latestCheck = await MonitorCheck.findOne({ monitor: monitor._id })
+                .sort({ createdAt: -1 });
+                
+            if (!latestCheck) {
+                statusCounts.unknown++;
+            } else if (latestCheck.success) {
+                statusCounts.up++;
+            } else {
+                statusCounts.down++;
+            }
+        }
+        
+        console.log('Monitor status summary:');
+        console.log(`- Up: ${statusCounts.up}`);
+        console.log(`- Down: ${statusCounts.down}`);
+        console.log(`- Unknown: ${statusCounts.unknown}`);
+        
+        // Initialize WebSocket events for monitor status updates
+        if (websocketService) {
+            console.log('Setting up WebSocket event handlers for monitoring');
+            websocketService.registerEvent('monitor:status', async (data, socket) => {
+                try {
+                    // Validate if user is authenticated to receive updates
+                    if (!socket.user) {
+                        return { error: 'Authentication required' };
+                    }
+                    
+                    const { monitorId } = data;
+                    if (!monitorId) {
+                        return { error: 'Monitor ID is required' };
+                    }
+                    
+                    // Get the latest status for the monitor
+                    const monitor = await Monitor.findById(monitorId);
+                    if (!monitor) {
+                        return { error: 'Monitor not found' };
+                    }
+                    
+                    const latestCheck = await MonitorCheck.findOne({ monitor: monitor._id })
+                        .sort({ createdAt: -1 });
+                    
+                    const status = !latestCheck ? 'unknown' : 
+                        latestCheck.success ? 'up' : 'down';
+                    
+                    return {
+                        monitorId,
+                        status,
+                        lastChecked: latestCheck ? latestCheck.createdAt : null,
+                        responseTime: latestCheck ? latestCheck.responseTime : null
+                    };
+                } catch (error) {
+                    console.error('Error in monitor:status event:', error);
+                    return { error: 'Failed to get monitor status' };
+                }
+            });
+        }
+        
+        console.log('Monitoring service initialized successfully');
+        return true;
+    } catch (error) {
+        console.error('Error initializing monitoring service:', error);
+        throw error;
+    }
+};
+
 // Export the functions
 module.exports = {
     performMonitorCheck,
     getAvailableMonitors,
     performAdminCheck,
     getMonitorStats,
-    scheduleMonitorChecks
+    scheduleMonitorChecks,
+    setWebSocketService,
+    initializeMonitoring
 }; 

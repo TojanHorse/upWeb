@@ -88,6 +88,9 @@ class VerificationService {
    */
   static async requestVerification(userId) {
     try {
+      // Import OTP utilities
+      const otpUtils = require('./otpGenerator');
+      
       // Cleanup expired codes first
       await this.cleanupExpiredCodes();
       
@@ -113,6 +116,12 @@ class VerificationService {
       // Generate a verification token
       const verificationToken = this.generateToken();
       
+      // Generate OTP for alternative verification
+      const verificationOTP = otpUtils.generateOTP(6);
+      const otpExpiry = otpUtils.generateOTPExpiry(60); // 1 hour expiry
+      
+      console.log(`Generated OTP for user ${user.email}: ${verificationOTP}`);
+      
       // Set expiration for 24 hours from now
       const verificationTokenExpires = new Date();
       verificationTokenExpires.setHours(verificationTokenExpires.getHours() + 24);
@@ -120,6 +129,8 @@ class VerificationService {
       // Update the user's verification information
       user.verificationToken = verificationToken;
       user.verificationTokenExpires = verificationTokenExpires;
+      user.verificationOTP = verificationOTP;
+      user.verificationOTPExpires = otpExpiry;
       user.verificationAttempts += 1;
       user.lastVerificationAttempt = new Date();
       
@@ -129,6 +140,7 @@ class VerificationService {
       const emailResult = await emailService.sendVerificationEmail({
         email: user.email,
         token: verificationToken,
+        otp: verificationOTP,  // Include OTP in the email
         name: user.name,
         userType: 'user'
       });
@@ -463,6 +475,87 @@ class VerificationService {
     } catch (error) {
       console.error('Error sending password recovery email:', error);
       return false;
+    }
+  }
+
+  /**
+   * Verify a user's email with the provided OTP code
+   * @param {string} userId - The user's ID
+   * @param {string} code - The verification code
+   * @returns {Promise<Object>} Result of the verification
+   */
+  static async verifyEmail(userId, code) {
+    try {
+      // Cleanup expired codes first
+      await this.cleanupExpiredCodes();
+      
+      // Find the user
+      const user = await User.findById(userId);
+      if (!user) {
+        return { success: false, message: 'User not found' };
+      }
+      
+      // Check if email is already verified
+      if (user.isEmailVerified) {
+        return { success: true, message: 'Email is already verified', isVerified: true };
+      }
+      
+      // Check if the verification OTP exists and hasn't expired
+      if (!user.verificationOTP || !user.verificationOTPExpires) {
+        return { 
+          success: false, 
+          message: 'Invalid or expired verification code. Please request a new one.', 
+          isVerified: false 
+        };
+      }
+      
+      // Check if OTP has expired
+      if (new Date() > user.verificationOTPExpires) {
+        return { 
+          success: false, 
+          message: 'Verification code has expired. Please request a new one.', 
+          isVerified: false 
+        };
+      }
+      
+      // Check if the code matches
+      if (user.verificationOTP !== code) {
+        return { 
+          success: false, 
+          message: 'Invalid verification code', 
+          isVerified: false 
+        };
+      }
+      
+      // Mark email as verified
+      user.isEmailVerified = true;
+      user.verificationToken = null;
+      user.verificationTokenExpires = null;
+      user.verificationOTP = null;
+      user.verificationOTPExpires = null;
+      
+      await user.save();
+      
+      // Send success email
+      try {
+        await this.sendVerificationSuccessEmail(user.email, user.name);
+      } catch (emailError) {
+        console.error('Failed to send verification success email:', emailError);
+        // Continue even if email fails
+      }
+      
+      return { 
+        success: true, 
+        message: 'Email verified successfully', 
+        isVerified: true 
+      };
+    } catch (error) {
+      console.error('Error verifying email:', error);
+      return { 
+        success: false, 
+        message: 'Internal server error', 
+        isVerified: false 
+      };
     }
   }
 }

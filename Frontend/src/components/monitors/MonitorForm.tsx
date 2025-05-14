@@ -1,239 +1,245 @@
-import React from 'react';
-import { useForm } from 'react-hook-form';
-import { Globe, Clock, Server, AlertCircle } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 
-interface MonitorFormData {
-  name: string;
-  url: string;
-  checkInterval: number;
-  protocol: 'http' | 'https';
-  notifyOnDown: boolean;
-  location?: string;
-  timeout?: number;
-  expectedStatusCode?: number;
-}
+type MonitorType = 'http' | 'https' | 'tcp' | 'ping';
 
 interface MonitorFormProps {
-  onSubmit: (data: MonitorFormData) => void;
-  loading: boolean;
-  error?: string;
-  initialData?: Partial<MonitorFormData>;
+  initialData?: {
+    id?: string;
+    name: string;
+    url: string;
+    type: MonitorType;
+    interval: number;
+    timeout: number;
+    retries: number;
+    active: boolean;
+    description?: string;
+  };
+  onSubmit: (data: any) => Promise<void>;
+  isEditing?: boolean;
 }
 
-const MonitorForm: React.FC<MonitorFormProps> = ({
-  onSubmit,
-  loading,
-  error,
-  initialData
-}) => {
-  const { register, handleSubmit, formState: { errors } } = useForm<MonitorFormData>({
-    defaultValues: {
-      name: initialData?.name || '',
-      url: initialData?.url || '',
-      checkInterval: initialData?.checkInterval || 5,
-      protocol: initialData?.protocol || 'https',
-      notifyOnDown: initialData?.notifyOnDown !== undefined ? initialData.notifyOnDown : true,
-      location: initialData?.location || undefined,
-      timeout: initialData?.timeout || 30,
-      expectedStatusCode: initialData?.expectedStatusCode || 200
-    }
+const MonitorForm = ({ initialData, onSubmit, isEditing = false }: MonitorFormProps) => {
+  const navigate = useNavigate();
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
+  
+  const [formData, setFormData] = useState({
+    name: '',
+    url: '',
+    type: 'https' as MonitorType,
+    interval: 5,
+    timeout: 30,
+    retries: 1,
+    active: true,
+    description: '',
   });
 
+  useEffect(() => {
+    if (initialData) {
+      setFormData({
+        ...initialData,
+        description: initialData.description || '',
+      });
+    }
+  }, [initialData]);
+
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
+    const { name, value, type } = e.target;
+    
+    setFormData(prev => ({
+      ...prev,
+      [name]: type === 'checkbox' 
+        ? (e.target as HTMLInputElement).checked 
+        : (type === 'number' ? Number(value) : value)
+    }));
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsSubmitting(true);
+    setFormError(null);
+    
+    try {
+      await onSubmit(formData);
+      navigate('/monitors');
+    } catch (error) {
+      console.error('Error submitting monitor:', error);
+      setFormError(error instanceof Error ? error.message : 'Failed to save monitor');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
   return (
-    <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
-      {error && (
-        <div className="bg-error-900/30 border border-error-700 text-error-400 px-4 py-3 rounded-md flex items-start">
-          <AlertCircle size={18} className="mr-2 mt-0.5 flex-shrink-0" />
-          <span className="text-sm">{error}</span>
+    <form onSubmit={handleSubmit} className="space-y-6 bg-white p-6 rounded-lg shadow-sm">
+      {formError && (
+        <div className="p-4 text-sm text-red-700 bg-red-100 rounded-md">
+          {formError}
         </div>
       )}
       
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+      <div className="space-y-4">
+        {/* Basic Info Section */}
         <div>
-          <label htmlFor="name" className="block text-sm font-medium text-dark-300 mb-1">
-            Monitor Name <span className="text-error-500">*</span>
-          </label>
-          <input
-            id="name"
-            type="text"
-            className={`input ${errors.name ? 'border-error-600 focus:ring-error-500' : ''}`}
-            placeholder="My Website"
-            {...register('name', { 
-              required: 'Monitor name is required',
-              maxLength: { 
-                value: 100, 
-                message: 'Name must be less than 100 characters' 
-              }
-            })}
-          />
-          {errors.name && (
-            <p className="mt-1 text-sm text-error-500">{errors.name.message}</p>
-          )}
-        </div>
-        
-        <div>
-          <label htmlFor="url" className="block text-sm font-medium text-dark-300 mb-1">
-            URL <span className="text-error-500">*</span>
-          </label>
-          <div className="flex">
-            <select
-              id="protocol"
-              className="select rounded-r-none py-2 px-2 w-auto"
-              {...register('protocol')}
-            >
-              <option value="https">https://</option>
-              <option value="http">http://</option>
-            </select>
-            <input
-              id="url"
-              type="text"
-              className={`input flex-1 rounded-l-none border-l-0 ${errors.url ? 'border-error-600 focus:ring-error-500' : ''}`}
-              placeholder="example.com"
-              {...register('url', { 
-                required: 'URL is required',
-                pattern: {
-                  value: /^[a-zA-Z0-9][a-zA-Z0-9-]{0,61}[a-zA-Z0-9](?:\.[a-zA-Z]{2,})+|localhost(?::\d+)?|(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)(?::\d+)?$/,
-                  message: 'Enter a valid domain or IP address'
-                }
-              })}
-            />
+          <h3 className="text-lg font-medium text-neutral-900 mb-4">Basic Information</h3>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <div>
+              <label htmlFor="name" className="block text-sm font-medium text-neutral-700">
+                Monitor Name <span className="text-red-500">*</span>
+              </label>
+              <input
+                type="text"
+                id="name"
+                name="name"
+                value={formData.name}
+                onChange={handleChange}
+                required
+                className="mt-1 block w-full rounded-md border-neutral-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                placeholder="My Website"
+              />
+            </div>
+            
+            <div>
+              <label htmlFor="url" className="block text-sm font-medium text-neutral-700">
+                URL or IP Address <span className="text-red-500">*</span>
+              </label>
+              <input
+                type="text"
+                id="url"
+                name="url"
+                value={formData.url}
+                onChange={handleChange}
+                required
+                className="mt-1 block w-full rounded-md border-neutral-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                placeholder="https://example.com"
+              />
+            </div>
+            
+            <div>
+              <label htmlFor="type" className="block text-sm font-medium text-neutral-700">
+                Monitor Type <span className="text-red-500">*</span>
+              </label>
+              <select
+                id="type"
+                name="type"
+                value={formData.type}
+                onChange={handleChange}
+                className="mt-1 block w-full rounded-md border-neutral-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+              >
+                <option value="http">HTTP</option>
+                <option value="https">HTTPS</option>
+                <option value="tcp">TCP</option>
+                <option value="ping">Ping</option>
+              </select>
+            </div>
+            
+            <div>
+              <label htmlFor="active" className="flex items-center text-sm font-medium text-neutral-700">
+                <input
+                  type="checkbox"
+                  id="active"
+                  name="active"
+                  checked={formData.active}
+                  onChange={handleChange}
+                  className="h-4 w-4 rounded border-neutral-300 text-primary-600 focus:ring-primary-500"
+                />
+                <span className="ml-2">Active</span>
+              </label>
+            </div>
           </div>
-          {errors.url && (
-            <p className="mt-1 text-sm text-error-500">{errors.url.message}</p>
-          )}
-        </div>
-      </div>
-      
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        <div>
-          <label htmlFor="checkInterval" className="block text-sm font-medium text-dark-300 mb-1">
-            Check Interval (minutes) <span className="text-error-500">*</span>
-          </label>
-          <input
-            id="checkInterval"
-            type="number"
-            className={`input ${errors.checkInterval ? 'border-error-600 focus:ring-error-500' : ''}`}
-            {...register('checkInterval', { 
-              required: 'Check interval is required',
-              min: { 
-                value: 1, 
-                message: 'Minimum interval is 1 minute' 
-              },
-              max: { 
-                value: 1440, 
-                message: 'Maximum interval is 1440 minutes (24 hours)' 
-              }
-            })}
-          />
-          {errors.checkInterval && (
-            <p className="mt-1 text-sm text-error-500">{errors.checkInterval.message}</p>
-          )}
         </div>
         
+        {/* Advanced Settings Section */}
         <div>
-          <label htmlFor="timeout" className="block text-sm font-medium text-dark-300 mb-1">
-            Timeout (seconds)
-          </label>
-          <input
-            id="timeout"
-            type="number"
-            className={`input ${errors.timeout ? 'border-error-600 focus:ring-error-500' : ''}`}
-            {...register('timeout', { 
-              min: { 
-                value: 1, 
-                message: 'Minimum timeout is 1 second' 
-              },
-              max: { 
-                value: 120, 
-                message: 'Maximum timeout is 120 seconds' 
-              }
-            })}
-          />
-          {errors.timeout && (
-            <p className="mt-1 text-sm text-error-500">{errors.timeout.message}</p>
-          )}
-        </div>
-      </div>
-      
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        <div>
-          <label htmlFor="expectedStatusCode" className="block text-sm font-medium text-dark-300 mb-1">
-            Expected Status Code
-          </label>
-          <input
-            id="expectedStatusCode"
-            type="number"
-            className={`input ${errors.expectedStatusCode ? 'border-error-600 focus:ring-error-500' : ''}`}
-            {...register('expectedStatusCode', { 
-              min: { 
-                value: 100, 
-                message: 'Status code must be between 100 and 599' 
-              },
-              max: { 
-                value: 599, 
-                message: 'Status code must be between 100 and 599' 
-              }
-            })}
-          />
-          {errors.expectedStatusCode && (
-            <p className="mt-1 text-sm text-error-500">{errors.expectedStatusCode.message}</p>
-          )}
+          <h3 className="text-lg font-medium text-neutral-900 mb-4">Advanced Settings</h3>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+            <div>
+              <label htmlFor="interval" className="block text-sm font-medium text-neutral-700">
+                Check Interval (minutes)
+              </label>
+              <input
+                type="number"
+                id="interval"
+                name="interval"
+                value={formData.interval}
+                onChange={handleChange}
+                min="1"
+                max="60"
+                className="mt-1 block w-full rounded-md border-neutral-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+              />
+            </div>
+            
+            <div>
+              <label htmlFor="timeout" className="block text-sm font-medium text-neutral-700">
+                Timeout (seconds)
+              </label>
+              <input
+                type="number"
+                id="timeout"
+                name="timeout"
+                value={formData.timeout}
+                onChange={handleChange}
+                min="5"
+                max="120"
+                className="mt-1 block w-full rounded-md border-neutral-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+              />
+            </div>
+            
+            <div>
+              <label htmlFor="retries" className="block text-sm font-medium text-neutral-700">
+                Retries before alert
+              </label>
+              <input
+                type="number"
+                id="retries"
+                name="retries"
+                value={formData.retries}
+                onChange={handleChange}
+                min="0"
+                max="5"
+                className="mt-1 block w-full rounded-md border-neutral-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+              />
+            </div>
+          </div>
         </div>
         
+        {/* Description Section */}
         <div>
-          <label htmlFor="location" className="block text-sm font-medium text-dark-300 mb-1">
-            Preferred Location
+          <label htmlFor="description" className="block text-sm font-medium text-neutral-700">
+            Description
           </label>
-          <select
-            id="location"
-            className="select"
-            {...register('location')}
-          >
-            <option value="">Auto-select best location</option>
-            <option value="us-east">US East (N. Virginia)</option>
-            <option value="us-west">US West (Oregon)</option>
-            <option value="eu-central">EU Central (Frankfurt)</option>
-            <option value="eu-west">EU West (Ireland)</option>
-            <option value="ap-south">Asia Pacific (Mumbai)</option>
-            <option value="ap-southeast">Asia Pacific (Singapore)</option>
-            <option value="ap-northeast">Asia Pacific (Tokyo)</option>
-          </select>
+          <textarea
+            id="description"
+            name="description"
+            value={formData.description}
+            onChange={handleChange}
+            rows={3}
+            className="mt-1 block w-full rounded-md border-neutral-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+            placeholder="Additional details about this monitor"
+          />
         </div>
       </div>
       
-      <div className="flex items-center">
-        <input
-          id="notifyOnDown"
-          type="checkbox"
-          className="h-4 w-4 rounded text-primary-600 bg-dark-800 border-dark-700 focus:ring-primary-500"
-          {...register('notifyOnDown')}
-        />
-        <label htmlFor="notifyOnDown" className="ml-2 block text-sm text-dark-300">
-          Notify me when website goes down
-        </label>
-      </div>
-      
-      <div className="flex justify-end">
+      {/* Form Actions */}
+      <div className="flex justify-end space-x-3">
+        <button
+          type="button"
+          onClick={() => navigate('/monitors')}
+          className="inline-flex items-center px-4 py-2 border border-neutral-300 text-sm font-medium rounded-md text-neutral-700 bg-white hover:bg-neutral-50"
+        >
+          Cancel
+        </button>
         <button
           type="submit"
-          className="btn btn-primary px-6"
-          disabled={loading}
+          disabled={isSubmitting}
+          className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-primary-600 hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 disabled:opacity-50"
         >
-          {loading ? (
-            <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-            </svg>
-          ) : (
-            <>
-              <Server size={18} className="mr-2" />
-              Create Monitor
-            </>
-          )}
+          {isSubmitting ? 'Saving...' : isEditing ? 'Update Monitor' : 'Create Monitor'}
         </button>
       </div>
     </form>
   );
 };
 
-export default MonitorForm;
+export default MonitorForm; 

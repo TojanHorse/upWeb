@@ -75,41 +75,54 @@ class EmailService {
   }
 
   /**
-   * Send a verification email with a link to the email verification page
+   * Send a verification email with a link and OTP to the email verification page
    * @param {Object} options - Verification options
    * @param {string} options.email - Recipient email address
    * @param {string} options.token - Verification token
+   * @param {string} options.otp - Verification OTP code
    * @param {string} options.name - User's name
    * @param {string} options.userType - Type of user (user, contributor, admin)
    * @returns {Promise<boolean>} - Success status
    */
-  async sendVerificationEmail({ email, token, name, userType }) {
-    const baseUrl = process.env.BACKEND_URL || `http://localhost:${process.env.PORT || 3000}`;
+  async sendVerificationEmail({ email, token, otp, name, userType }) {
+    // For debugging
+    console.log('Sending verification email with OTP:', {
+      email,
+      tokenProvided: !!token,
+      otp,
+      name,
+      userType
+    });
+    
+    const baseUrl = process.env.FRONTEND_URL || `http://localhost:5173`;
     const verificationUrl = `${baseUrl}/verify-email?email=${encodeURIComponent(email)}&token=${token}&type=${userType}`;
     
-    const subject = `Verify Your Email - UpWeb Monitoring`;
+    const subject = `Verify Your Email - UplinkBe`;
     
     const text = `
       Hello ${name},
       
-      Thank you for registering with UpWeb Monitoring as a ${userType}.
+      Thank you for registering with UplinkBe as a ${userType}.
       
       Please verify your email address by clicking on the link below:
       ${verificationUrl}
       
-      This link will expire in 24 hours.
+      Alternatively, if the link doesn't work, you can use this OTP code:
+      ${otp}
+      
+      This link and OTP code will expire in 24 hours.
       
       If you did not create an account, please ignore this email.
       
       Best regards,
-      The UpWeb Monitoring Team
+      The UplinkBe Team
     `;
     
     const html = `
       <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
         <h2 style="color: #3182ce;">Verify Your Email Address</h2>
         <p>Hello ${name},</p>
-        <p>Thank you for registering with UpWeb Monitoring as a ${userType}.</p>
+        <p>Thank you for registering with UplinkBe as a ${userType}.</p>
         <p>Please verify your email address by clicking on the button below:</p>
         
         <div style="margin: 30px 0; text-align: center;">
@@ -124,13 +137,24 @@ class EmailService {
           <a href="${verificationUrl}">${verificationUrl}</a>
         </p>
         
-        <p>This link will expire in 24 hours.</p>
+        <div style="margin: 20px 0; background-color: #f7fafc; border: 1px solid #e2e8f0; border-radius: 5px; padding: 15px; text-align: center;">
+          <p style="margin: 0 0 10px 0;"><strong>Alternatively, you can use this OTP code:</strong></p>
+          <p style="font-size: 24px; letter-spacing: 5px; font-weight: bold; margin: 0;">${otp}</p>
+        </div>
+        
+        <p>This link and OTP code will expire in 24 hours.</p>
         <p>If you did not create an account, please ignore this email.</p>
-        <p>Best regards,<br>The UpWeb Monitoring Team</p>
+        <p>Best regards,<br>The UplinkBe Team</p>
       </div>
     `;
     
-    return this.sendEmail({ to: email, subject, text, html });
+    const result = await this.sendEmail({ to: email, subject, text, html });
+    if (result) {
+      console.log(`Verification email with OTP sent successfully to ${email}`);
+    } else {
+      console.error(`Failed to send verification email with OTP to ${email}`);
+    }
+    return result;
   }
 
   /**

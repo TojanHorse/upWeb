@@ -1,159 +1,170 @@
-import React from 'react';
-import { motion } from 'framer-motion';
-import { Globe, Clock, Server, MapPin, Loader2, ExternalLink } from 'lucide-react';
-
-type MonitorStatus = 'good' | 'warning' | 'error' | 'checking';
+import { useState } from 'react';
+import { Link } from 'react-router-dom';
+import { Clock, ArrowUpCircle, ArrowDownCircle, Loader2, Settings, MoreVertical, Trash2 } from 'lucide-react';
+import { formatDistanceToNow } from 'date-fns';
 
 interface MonitorCardProps {
-  id: string;
-  name: string;
-  url: string;
-  status: MonitorStatus;
-  responseTime?: number;
-  lastChecked?: string;
-  location?: string;
-  uptime?: number;
-  onCheck?: (id: string) => void;
-  isChecking?: boolean;
+  monitor: {
+    id: string;
+    name: string;
+    url: string;
+    type: string;
+    status: 'up' | 'down' | 'pending' | 'paused';
+    uptime: number;
+    lastChecked: string;
+    responseTime: number;
+    active: boolean;
+  };
+  onDelete: (id: string) => void;
 }
 
-const MonitorCard: React.FC<MonitorCardProps> = ({
-  id,
-  name,
-  url,
-  status,
-  responseTime,
-  lastChecked,
-  location,
-  uptime,
-  onCheck,
-  isChecking = false
-}) => {
-  const statusText = {
-    good: 'Online',
-    warning: 'Degraded',
-    error: 'Offline',
-    checking: 'Checking...'
-  };
-  
-  const getStatusIndicator = () => {
-    if (status === 'checking') {
-      return (
-        <div className="flex items-center">
-          <Loader2 size={14} className="text-primary-500 animate-spin mr-1.5" />
-          <span>Checking...</span>
-        </div>
-      );
+const MonitorCard = ({ monitor, onDelete }: MonitorCardProps) => {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+
+  const handleDelete = async () => {
+    if (window.confirm(`Are you sure you want to delete "${monitor.name}"?`)) {
+      setIsDeleting(true);
+      try {
+        await onDelete(monitor.id);
+      } catch (error) {
+        console.error('Error deleting monitor:', error);
+        setIsDeleting(false);
+      }
     }
-    
-    return (
-      <div className="flex items-center">
-        <span className={`status-indicator status-${status} mr-1.5`}></span>
-        {statusText[status]}
-      </div>
-    );
   };
-  
-  const handleClick = () => {
-    if (onCheck && !isChecking) {
-      onCheck(id);
+
+  const getStatusColor = (status: string) => {
+    switch (status) {
+      case 'up':
+        return 'text-green-600';
+      case 'down':
+        return 'text-red-600';
+      case 'pending':
+        return 'text-orange-500';
+      case 'paused':
+        return 'text-neutral-500';
+      default:
+        return 'text-neutral-500';
     }
+  };
+
+  const getStatusIcon = (status: string) => {
+    switch (status) {
+      case 'up':
+        return <ArrowUpCircle className="h-5 w-5 text-green-600" />;
+      case 'down':
+        return <ArrowDownCircle className="h-5 w-5 text-red-600" />;
+      case 'pending':
+        return <Loader2 className="h-5 w-5 text-orange-500 animate-spin" />;
+      case 'paused':
+        return <Settings className="h-5 w-5 text-neutral-500" />;
+      default:
+        return <Loader2 className="h-5 w-5 text-neutral-500" />;
+    }
+  };
+
+  const formatUptime = (uptime: number) => {
+    return `${uptime.toFixed(2)}%`;
   };
 
   return (
-    <motion.div 
-      initial={{ opacity: 0, y: 10 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.3 }}
-      className={`card-gradient cursor-pointer hover:shadow-lg transition-all duration-300 ${isChecking ? 'opacity-80' : ''}`}
-      onClick={handleClick}
-    >
-      <div className="flex flex-col h-full">
-        <div className="flex justify-between items-start mb-4">
-          <h3 className="font-semibold text-white truncate pr-4">{name}</h3>
-          <div className={`badge ${
-            status === 'good' 
-              ? 'badge-success' 
-              : status === 'warning' 
-                ? 'badge-warning' 
-                : status === 'checking'
-                  ? 'badge-primary'
-                  : 'badge-error'
-          }`}>
-            {getStatusIndicator()}
+    <div className={`bg-white border rounded-lg shadow-sm overflow-hidden ${!monitor.active && 'opacity-70'}`}>
+      <div className="px-4 py-4 sm:px-6">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center space-x-3">
+            {getStatusIcon(monitor.status)}
+            <h3 className="text-lg font-medium text-neutral-900 truncate">
+              <Link to={`/monitors/${monitor.id}`} className="hover:underline">
+                {monitor.name}
+              </Link>
+            </h3>
+          </div>
+          <div className="relative">
+            <button
+              onClick={() => setMenuOpen(!menuOpen)}
+              className="p-1 rounded-full text-neutral-400 hover:text-neutral-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
+            >
+              <MoreVertical className="h-5 w-5" />
+            </button>
+            
+            {menuOpen && (
+              <div className="origin-top-right absolute right-0 mt-2 w-48 rounded-md shadow-lg bg-white ring-1 ring-black ring-opacity-5 z-10">
+                <div className="py-1" role="menu">
+                  <Link
+                    to={`/monitors/${monitor.id}`}
+                    className="block px-4 py-2 text-sm text-neutral-700 hover:bg-neutral-100"
+                    role="menuitem"
+                    onClick={() => setMenuOpen(false)}
+                  >
+                    View Details
+                  </Link>
+                  <button
+                    className="block w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-neutral-100"
+                    role="menuitem"
+                    onClick={handleDelete}
+                    disabled={isDeleting}
+                  >
+                    {isDeleting ? 'Deleting...' : 'Delete Monitor'}
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
         
-        <div className="flex items-center text-dark-400 text-sm mb-4">
-          <Globe size={14} className="mr-1.5 flex-shrink-0" />
-          <span className="truncate">{url}</span>
+        <div className="mt-2 text-sm text-neutral-500 truncate">
+          <span className="font-medium text-neutral-700">{monitor.type.toUpperCase()}</span>
+          {' '}&middot;{' '}
           <a 
-            href={url.startsWith('http') ? url : `https://${url}`} 
+            href={monitor.url} 
             target="_blank" 
             rel="noopener noreferrer"
-            onClick={e => e.stopPropagation()}
-            className="ml-1.5 text-primary-400 hover:text-primary-300"
+            className="text-primary-600 hover:underline truncate"
           >
-            <ExternalLink size={12} />
+            {monitor.url}
           </a>
         </div>
         
-        <div className="flex-grow">
-          <div className="grid grid-cols-2 gap-3 mb-3">
-            {responseTime !== undefined && (
-              <div className="bg-dark-800/50 rounded-md p-2">
-                <div className="text-xs text-dark-400 mb-1">Response Time</div>
-                <div className="font-medium">{responseTime} ms</div>
-              </div>
-            )}
-            
-            {uptime !== undefined && (
-              <div className="bg-dark-800/50 rounded-md p-2">
-                <div className="text-xs text-dark-400 mb-1">Uptime</div>
-                <div className="font-medium">{uptime}%</div>
-              </div>
-            )}
+        <div className="mt-4 flex items-center justify-between">
+          <div className="flex items-center text-sm">
+            <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getStatusColor(monitor.status)} bg-opacity-10`}>
+              {monitor.status.toUpperCase()}
+            </span>
+            <span className="ml-2 text-neutral-700">
+              Uptime: <span className="font-medium text-neutral-900">{formatUptime(monitor.uptime)}</span>
+            </span>
           </div>
-          
-          <div className="flex flex-col space-y-2 text-sm">
-            {location && (
-              <div className="flex items-center text-dark-300">
-                <MapPin size={14} className="mr-1.5 flex-shrink-0 text-dark-400" />
-                {location}
-              </div>
-            )}
-            
-            {lastChecked && (
-              <div className="flex items-center text-dark-300">
-                <Clock size={14} className="mr-1.5 flex-shrink-0 text-dark-400" />
-                Last checked: {lastChecked}
-              </div>
-            )}
+          <div className="flex items-center text-sm text-neutral-500">
+            <Clock className="flex-shrink-0 mr-1.5 h-4 w-4 text-neutral-400" />
+            <span>
+              {monitor.lastChecked 
+                ? `Checked ${formatDistanceToNow(new Date(monitor.lastChecked), { addSuffix: true })}` 
+                : 'Not checked yet'}
+            </span>
           </div>
         </div>
         
-        {onCheck && (
-          <button
-            onClick={handleClick}
-            disabled={isChecking}
-            className="mt-4 w-full btn btn-outline py-1.5 flex items-center justify-center"
-          >
-            {isChecking ? (
-              <>
-                <Loader2 size={14} className="animate-spin mr-1.5" />
-                Checking...
-              </>
-            ) : (
-              <>
-                <Server size={14} className="mr-1.5" />
-                Check Now
-              </>
-            )}
-          </button>
+        {monitor.status !== 'down' && monitor.status !== 'paused' && (
+          <div className="mt-2">
+            <div className="flex items-center justify-between text-xs">
+              <span>Response Time</span>
+              <span className="font-medium">{monitor.responseTime} ms</span>
+            </div>
+            <div className="mt-1 w-full bg-neutral-200 rounded-full h-1.5">
+              <div 
+                className={`h-1.5 rounded-full ${
+                  monitor.responseTime < 300 ? 'bg-green-500' : 
+                  monitor.responseTime < 800 ? 'bg-yellow-500' : 'bg-red-500'
+                }`}
+                style={{ width: `${Math.min(100, (monitor.responseTime / 2000) * 100)}%` }}
+              ></div>
+            </div>
+          </div>
         )}
       </div>
-    </motion.div>
+    </div>
   );
 };
 
-export default MonitorCard;
+export default MonitorCard; 

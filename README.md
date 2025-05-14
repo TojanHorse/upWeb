@@ -1,199 +1,151 @@
-# UplinkBe - Decentralized Website Monitoring API
+# UplinkBe - Website Monitoring Platform API
 
-This is the backend API for the Uplink platform, a decentralized system for website monitoring where users can earn money by performing checks and contributors can pay to have their websites monitored.
+UplinkBe is a decentralized website monitoring platform API that allows users to monitor their websites for uptime and performance. Contributors can provide monitoring services and earn rewards for their contribution.
 
 ## Features
 
-- User authentication and management
-- Admin dashboard and management
-- Contributor website management
-- Website monitoring (HTTP, HTTPS, DNS, SSL, TCP, Ping)
-- Decentralized monitoring system (users perform checks and get paid)
-- Subscription plans for contributors
-- RazorPay integration for payments
-- Wallet system for users and contributors
-- Incident tracking and reporting
-- Location-aware monitoring with detailed geolocation data
-- Enhanced email notifications with precise failure location information
-- Email verification system with rate limiting
+- **User Management**: API endpoints for user registration and authentication
+- **Contributor System**: API for contributors to provide monitoring services
+- **Admin Management**: API to manage users, websites, and monitor statuses
+- **Real-time Updates**: WebSocket support for instant notifications
+- **Email Alerts**: Email notification system for critical events
+- **Clerk Authentication**: Secure authentication with Clerk
+- **Terminal Monitoring**: Command-line tool for website monitoring
 
 ## Tech Stack
 
-- Node.js with Express
-- MongoDB with Mongoose
-- JWT for authentication
-- bcrypt for password hashing
-- Axios for HTTP requests
-- RazorPay for payment processing
+- **Backend**: Node.js, Express, MongoDB
+- **Authentication**: Clerk Auth
+- **Real-time Updates**: Socket.io
+- **Monitoring**: Custom monitoring service
 
-## Setup
+## Installation and Setup
+
+### Prerequisites
+
+- Node.js (v16 or higher)
+- MongoDB
+- Clerk account (for authentication)
+
+### Environment Variables
+
+Create a `.env` file for the backend using the provided template:
+
+```
+# MongoDB Configuration
+MONGODB_URI=mongodb+srv://username:password@cluster.mongodb.net/dbname
+DB_NAME=Downtimemonitor
+
+# Server Configuration
+PORT=3001
+NODE_ENV=development
+
+# Clerk Authentication
+CLERK_SECRET_KEY=your_clerk_secret_key
+CLERK_PUBLISHABLE_KEY=your_clerk_publishable_key
+
+# JWT Configuration
+JWT_SECRET=your_jwt_secret_key
+JWT_EXPIRES_IN=7d
+JWT_ADMIN_SECRET=your_admin_jwt_secret
+JWT_CONTRIBUTOR_SECRET=your_contributor_jwt_secret
+JWT_USER_SECRET=your_user_jwt_secret
+
+# Email Configuration
+EMAIL_HOST=smtp.example.com
+EMAIL_PORT=587
+EMAIL_USER=your_email@example.com
+EMAIL_PASSWORD=your_email_password
+EMAIL_FROM=noreply@yourservice.com
+
+# Cors Configuration
+ALLOWED_ORIGINS=http://localhost:5173
+```
+
+### Installation
 
 1. Clone the repository:
-```
-git clone <repository-url>
+
+```bash
+git clone https://github.com/your-username/UplinkBe.git
 cd UplinkBe
 ```
 
 2. Install dependencies:
-```
+
+```bash
 npm install
 ```
 
-3. Create a `.env` file in the root directory:
-```
-# Server configuration
-PORT=3000
+### Running the Application
 
-# MongoDB connection
-MONGODB_URI=mongodb://localhost:27017/uplinkdb
+**Development Mode**:
 
-# JWT Secrets
-USER_JWT_SECRET=user_jwt_secret_dev_only
-ADMIN_JWT_SECRET=admin_jwt_secret_dev_only
-CONTRIBUTOR_JWT_SECRET=contributor_jwt_secret_dev_only
-
-# RazorPay Integration (optional - leave empty for demo mode)
-RAZORPAY_KEY_ID=
-RAZORPAY_KEY_SECRET=
-
-# Email Configuration (Gmail)
-GMAIL_USER=your-email@gmail.com
-GMAIL_PASSWORD=your-app-password
-
-# Monitoring Settings
-PAYMENT_PER_CHECK=5 # Amount in cents paid to users per check
-```
-
-4. Start the development server:
-```
+```bash
 npm run dev
 ```
 
-## Email Notifications
+**Production Mode**:
 
-The system includes email notifications for:
+```bash
+npm start
+```
 
-- Welcome emails to new users and contributors
-- Monitor status alerts (when a monitor goes down or comes back up)
-- Enhanced alerts for website owners with detailed location information about failures
-- Email verification codes for new users
+### Terminal Monitoring Tool
 
-### Email Verification
+UplinkBe includes a terminal-based monitoring tool to check website status directly from the command line:
 
-The system includes a complete email verification flow:
+```bash
+npm run monitor
+```
 
-- New users automatically receive a verification code on signup
-- Users can request up to 5 verification codes per day
-- Verification codes expire after 15 minutes
-- Unverified users can continue using the platform with limited access
-- Status tracking for verification attempts and success
+The terminal monitor supports the following commands:
 
-### Email Configuration
-
-To enable email functionality, you need to set up Gmail credentials in your `.env` file:
-
-1. Use a Gmail account for sending emails
-2. Set `GMAIL_USER` to your Gmail address
-3. For `GMAIL_PASSWORD`, use an "App Password" (not your regular password)
-   - Go to your Google Account > Security
-   - Enable 2-Step Verification if not already enabled
-   - Go to App Passwords, select "Mail" and "Other", name it "UplinkBe"
-   - Use the generated 16-character password
-
-If these values are not set, the system will still work but email notifications will be disabled.
-
-## Location-Aware Monitoring
-
-The system collects and uses detailed location information from users who perform monitoring checks:
-
-- Automatically identifies user's location (city, region, country) via browser geolocation API
-- Captures precise coordinates for pinpointing where issues occur
-- Uses IP-based geolocation as fallback when browser geolocation is unavailable
-- Includes location details in email alerts to website owners
-- Provides website owners with insights about where their services might be experiencing issues
-
-### Location Data Privacy
-
-Users' location data is:
-
-- Only collected when explicitly performing a monitor check
-- Used solely for monitoring purposes and alert notifications
-- Shared only with website owners during downtime incidents
-- Never used for advertising or tracking
-- Stored securely and in compliance with privacy regulations
+- `list` - List all monitors
+- `check <id>` - Check status of a specific monitor
+- `checkall` - Check all monitors
+- `add <url> <name>` - Add a new website to monitor
+- `history <id>` - View history of a monitor
+- `exit` - Exit the program
 
 ## API Endpoints
 
 ### User Routes
 
-- `POST /user/signup` - Create a new user account
-- `POST /user/signin` - Sign in to user account
-- `PUT /user/update` - Update user profile
-- `GET /user/profile` - Get user profile and wallet information
-
-### Admin Routes
-
-- `POST /admin/signup` - Create a new admin account
-- `POST /admin/signin` - Sign in to admin account
-- `PUT /admin/update` - Update admin profile
-- `GET /admin/websites` - Get all websites
-- `PUT /admin/websites/:id/status` - Update website status
+- `POST /api/user/signup` - Register a new user
+- `POST /api/user/signin` - User login
+- `GET /api/user/profile` - Get user profile
+- `PUT /api/user/update` - Update user profile
+- `GET /api/user/wallet` - Get user wallet
 
 ### Contributor Routes
 
-- `POST /contributor/signup` - Create a new contributor account
-- `POST /contributor/signin` - Sign in to contributor account
-- `PUT /contributor/update` - Update contributor profile
-- `GET /contributor/profile` - Get contributor profile, wallet, and assigned websites
+- `POST /api/contributor/signup` - Register a new contributor
+- `POST /api/contributor/signin` - Contributor login
+- `GET /api/contributor/websites` - Get websites for a contributor
+- `GET /api/contributor/wallet` - Get contributor wallet
 
 ### Monitor Routes
 
-#### For Users
-- `GET /monitor/available` - Get available monitors to check
-- `POST /monitor/check/:id` - Perform a check on a monitor
-- `GET /monitor/history` - Get user's check history
+- `GET /api/monitor/available` - Get available monitors
+- `POST /api/monitor` - Create a new monitor
+- `POST /api/monitor/check/:id` - Check a specific monitor
+- `GET /api/monitor/history` - Get monitor history
 
-#### For Contributors
-- `POST /monitor` - Create a new monitor
-- `GET /monitor/contributor` - Get all monitors for the contributor
-- `PUT /monitor/:id` - Update a monitor
-- `DELETE /monitor/:id` - Delete a monitor
-- `POST /monitor/subscription` - Create a new subscription
-- `GET /monitor/subscription` - Get all subscriptions
-- `PUT /monitor/subscription/:id/cancel` - Cancel a subscription
-- `POST /monitor/subscription/verify-payment` - Verify payment for subscription
+### Admin Routes
 
-#### For Admins
-- `GET /monitor/admin` - Get all monitors
-- `GET /monitor/admin/incidents` - Get all incidents
-- `GET /monitor/admin/subscriptions` - Get all subscriptions
+- `GET /api/admin/users` - Get all users
+- `GET /api/admin/websites` - Get all websites
+- `PUT /api/admin/websites/:id/status` - Update website status
 
-## Subscription Plans
+## Contributing
 
-The platform offers three subscription plans for contributors:
+1. Fork the repository
+2. Create a feature branch: `git checkout -b feature-name`
+3. Commit your changes: `git commit -m 'Add some feature'`
+4. Push to the branch: `git push origin feature-name`
+5. Open a pull request
 
-1. **Basic Plan** - $80/month
-   - 5 monitors
-   - 5-minute check interval
+## License
 
-2. **Standard Plan** - $150/month
-   - 10 monitors
-   - 3-minute check interval
-
-3. **Premium Plan** - $300/month
-   - 20 monitors
-   - 1-minute check interval
-
-## How It Works
-
-1. **Contributors** sign up and add their websites.
-2. They create a subscription to monitor their websites.
-3. **Users** sign up and perform monitoring checks on available websites.
-4. Users get paid a small amount (default: 5 cents) per successful check.
-5. When a check fails, an incident is created and can be tracked.
-6. **Admins** can monitor all activities, users, and websites.
-
-## Development
-
-- Run in development mode: `npm run dev`
-- Run in production mode: `npm start` 
+This project is licensed under the ISC License. 

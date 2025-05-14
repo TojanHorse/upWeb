@@ -1,20 +1,19 @@
 import axios from 'axios';
 
-// Base API instance
-export const api = axios.create({
-  baseURL: import.meta.env.VITE_API_URL || 'http://localhost:3000',
-  timeout: 10000,
+// Base URL for API calls from environment variables or fallback to localhost
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001';
+
+// Create axios instance
+const api = axios.create({
+  baseURL: API_URL,
   headers: {
     'Content-Type': 'application/json',
   },
 });
 
-console.log('API baseURL:', api.defaults.baseURL);
-
-// Interceptors to handle tokens and errors
+// Request interceptor to add auth token to all requests
 api.interceptors.request.use(
   (config) => {
-    console.log('API Request:', config.method?.toUpperCase(), config.url, config.data);
     const token = localStorage.getItem('token');
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
@@ -24,127 +23,78 @@ api.interceptors.request.use(
   (error) => Promise.reject(error)
 );
 
+// Response interceptor for error handling
 api.interceptors.response.use(
-  (response) => {
-    console.log('API Response:', response.status, response.data);
-    return response;
-  },
+  (response) => response,
   (error) => {
-    console.error('API Error:', error.response?.status, error.response?.data);
-    // Handle token expiration
-    if (error.response?.status === 401) {
-      localStorage.removeItem('token');
-      window.location.href = '/login';
+    // Handle specific error codes
+    if (error.response) {
+      switch (error.response.status) {
+        case 401:
+          // Unauthorized - redirect to login
+          window.location.href = '/sign-in';
+          break;
+        case 403:
+          // Forbidden - redirect to dashboard
+          window.location.href = '/dashboard';
+          break;
+        default:
+          // Handle other errors
+          console.error('API Error:', error.response.data);
+      }
+    } else if (error.request) {
+      // The request was made but no response was received
+      console.error('Network Error:', error.request);
+    } else {
+      // Something happened in setting up the request
+      console.error('Request Error:', error.message);
     }
     return Promise.reject(error);
   }
 );
 
-// Authentication service
-export const authService = {
-  login: async (email: string, password: string, role = 'user') => {
-    const endpoint = role === 'admin' 
-      ? '/admin/signin'
-      : role === 'contributor' 
-        ? '/contributor/signin' 
-        : '/user/signin';
-    
-    return api.post(endpoint, { email, password });
-  },
-  
-  register: async (name: string, email: string, password: string, role = 'user') => {
-    const endpoint = role === 'contributor' 
-      ? '/contributor/signup' 
-      : '/user/signup';
-    
-    return api.post(endpoint, { name, email, password });
-  },
-  
-  requestVerification: async () => {
-    return api.post('/user/verify/request');
-  },
-  
-  verifyEmail: async (code: string) => {
-    return api.post('/user/verify/confirm', { code });
-  },
+// API endpoints
+export const monitorApi = {
+  getAll: () => api.get('/monitors'),
+  getById: (id) => api.get(`/monitors/${id}`),
+  create: (data) => api.post('/monitors', data),
+  update: (id, data) => api.put(`/monitors/${id}`, data),
+  delete: (id) => api.delete(`/monitors/${id}`),
+  checkNow: (id) => api.post(`/monitors/${id}/check`),
+  getHistory: (id) => api.get(`/monitors/${id}/history`),
+  getStats: (id) => api.get(`/monitors/${id}/stats`),
 };
 
-// Monitor service
-export const monitorService = {
-  getAvailableMonitors: async () => {
-    return api.get('/monitor/available');
-  },
-  
-  getMonitorHistory: async () => {
-    return api.get('/monitor/history');
-  },
-  
-  createMonitor: async (monitorData: any) => {
-    return api.post('/monitor', monitorData);
-  },
-  
-  checkMonitor: async (id: string) => {
-    return api.post(`/monitor/check/${id}`);
-  },
+export const userApi = {
+  getProfile: () => api.get('/user/profile'),
+  updateProfile: (data) => api.put('/user/profile', data),
+  getDashboard: () => api.get('/user/dashboard'),
 };
 
-// Website service
-export const websiteService = {
-  getContributorWebsites: async () => {
-    return api.get('/contributor/websites');
-  },
-  
-  getAllWebsites: async () => {
-    return api.get('/admin/websites');
-  },
-  
-  updateWebsiteStatus: async (id: string, status: string) => {
-    return api.put(`/admin/websites/${id}/status`, { status });
-  },
+export const contributorApi = {
+  getProfile: () => api.get('/contributor/profile'),
+  updateProfile: (data) => api.put('/contributor/profile', data),
+  getDashboard: () => api.get('/contributor/dashboard'),
+  getAssignedWebsites: () => api.get('/contributor/websites'),
+  getEarnings: () => api.get('/contributor/earnings'),
+  updateAvailability: (data) => api.put('/contributor/availability', data),
 };
 
-// Wallet service
-export const walletService = {
-  getUserWallet: async () => {
-    return api.get('/user/wallet');
-  },
-  
-  getContributorWallet: async () => {
-    return api.get('/contributor/wallet');
-  },
-  
-  initiatePayment: async (amount: number) => {
-    return api.post('/payment/create', { amount });
-  },
-  
-  verifyPayment: async (paymentId: string, orderId: string, signature: string) => {
-    return api.post('/payment/verify', { paymentId, orderId, signature });
-  },
+export const adminApi = {
+  getDashboard: () => api.get('/admin/dashboard'),
+  getUsers: () => api.get('/admin/users'),
+  getUser: (id) => api.get(`/admin/users/${id}`),
+  updateUser: (id, data) => api.put(`/admin/users/${id}`, data),
+  deleteUser: (id) => api.delete(`/admin/users/${id}`),
+  getContributors: () => api.get('/admin/contributors'),
+  getContributor: (id) => api.get(`/admin/contributors/${id}`),
+  getAllMonitors: () => api.get('/admin/monitors'),
 };
 
-// User profile service
-export const profileService = {
-  getUserProfile: async () => {
-    return api.get('/user/profile');
-  },
-  
-  getContributorProfile: async () => {
-    return api.get('/contributor/profile');
-  },
-  
-  getAdminProfile: async () => {
-    return api.get('/admin/profile');
-  },
-  
-  updateUserProfile: async (data: any) => {
-    return api.put('/user/update', data);
-  },
-  
-  updateContributorProfile: async (data: any) => {
-    return api.put('/contributor/update', data);
-  },
-  
-  updateAdminProfile: async (data: any) => {
-    return api.put('/admin/update', data);
-  },
+export const incidentApi = {
+  getAll: () => api.get('/incidents'),
+  getById: (id) => api.get(`/incidents/${id}`),
+  resolve: (id, data) => api.put(`/incidents/${id}/resolve`, data),
 };
+
+export default api;
